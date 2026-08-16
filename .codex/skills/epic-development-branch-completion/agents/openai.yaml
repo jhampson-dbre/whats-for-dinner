@@ -1,0 +1,4 @@
+interface:
+  display_name: "Development-Branch Completion"
+  short_description: "Finish multi-task branches for integration review"
+  default_prompt: "Use $epic-development-branch-completion to finish this development branch for review."

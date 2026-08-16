@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bug-Fix Issue-Class Audit"
+  short_description: "Scope same-class bug fixes safely"
+  default_prompt: "Use $bugfix-issue-class-audit to scope this behavior bug before dispatching an implementor."
