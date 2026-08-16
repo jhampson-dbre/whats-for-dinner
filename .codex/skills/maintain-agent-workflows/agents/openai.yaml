@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Workflow Maintenance"
+  short_description: "Keep agent workflow changes lean and behavioral"
+  default_prompt: "Use $maintain-agent-workflows to make the smallest safe change to this repository agent workflow."

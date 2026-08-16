@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code Simplification Gate"
+  short_description: "Simplify green diffs without behavior changes"
+  default_prompt: "Use $code-simplification only for one coordinator-authorized bounded candidate from the $ponytail-review pass on a stabilized green diff."
