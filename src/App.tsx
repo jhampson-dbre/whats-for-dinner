@@ -100,6 +100,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
   const [planStartDate, setPlanStartDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [weeklyPreview, setWeeklyPreview] = useState<ReturnType<typeof buildWeeklyPlan>>()
   const [optionalAction, setOptionalAction] = useState<'fallback' | 'use' | 'adapt' | 'reject'>('fallback')
+  const [plannedTakeoutDate, setPlannedTakeoutDate] = useState<string>()
   const [unavailableItems, setUnavailableItems] = useState<Set<string>>(() => initialShoppingControls.unavailable)
   const [skippedItems, setSkippedItems] = useState<Set<string>>(() => initialShoppingControls.skipped)
   const [perishableItems, setPerishableItems] = useState<Set<string>>(() => initialShoppingControls.perishable)
@@ -111,6 +112,8 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
   const [adaptationDinerId, setAdaptationDinerId] = useState('')
   const [adaptationIssue, setAdaptationIssue] = useState('')
   const [adaptationName, setAdaptationName] = useState('')
+  const [recoveryMealId, setRecoveryMealId] = useState('')
+  const [recoveryTargetId, setRecoveryTargetId] = useState('')
   const [adaptationChecks, setAdaptationChecks] = useState({ solvesIssue: false, coordinatedCooking: false, noSecondEntree: false, noUnplannedProtein: false, noSeparateTimeline: false, noExtraEffort: false })
   const [takeoutContext, setTakeoutContext] = useState<'planned' | 'unforeseeable-disruption' | 'predictable-planning-or-acceptance-failure'>('planned')
   const [feedbackTarget, setFeedbackTarget] = useState(() => eligibleFeedbackSlot(initialState))
@@ -177,6 +180,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
   const previewWeeklyPlan = () => {
     if (!planStartDate) { setWeeklyPreview(undefined); setMessage('Choose a week-start date first.'); return }
     setOptionalAction('fallback')
+    setPlannedTakeoutDate(undefined)
     setWeeklyPreview(buildWeeklyPlan(state, planStartDate))
   }
   const chooseOptionalMeal = (action: 'use' | 'adapt' | 'reject') => {
@@ -188,13 +192,17 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
     const planId = crypto.randomUUID()
     const slotIds = weeklyPreview.slots.map(() => crypto.randomUUID())
     const rejectedMealId = optionalAction === 'reject' ? weeklyPreview.optional?.mealId : undefined
-    update((current) => ({ ...current, meals: rejectedMealId ? current.meals.map((meal) => meal.id === rejectedMealId ? { ...meal, active: false } : meal) : current.meals, plans: [...current.plans, {
+    const takeoutIndex = weeklyPreview.slots.findIndex((slot) => slot.date === plannedTakeoutDate)
+    const next: AppStateV1 = { ...state, meals: rejectedMealId ? state.meals.map((meal) => meal.id === rejectedMealId ? { ...meal, active: false } : meal) : state.meals, plans: [...state.plans, {
       id: planId,
       confirmed: true,
       scoreReasons: weeklyPreview.slots.flatMap((slot) => slot.reasons).filter((reason, index, values) => values.indexOf(reason) === index),
       ...(weeklyPreview.optional && { variants: [{ id: crypto.randomUUID(), label: 'Proven fallback for optional unfamiliar meal', mealId: weeklyPreview.optional.fallbackMealId }] }),
-      slots: weeklyPreview.slots.map((slot, index) => ({ id: slotIds[index], date: slot.date, mealId: slot.mealId, ...(slot.recipeId && { recipeId: slot.recipeId }), ...(slot.leftoverFrom !== undefined && { leftoverFromSlotId: slotIds[slot.leftoverFrom] }), score: slot.score, confidence: slot.confidence, scoreReasons: slot.reasons })),
-    }] }))
+      slots: weeklyPreview.slots.map((slot, index) => ({ id: slotIds[index], date: slot.date, ...(index !== takeoutIndex && { mealId: slot.mealId }), ...(index !== takeoutIndex && slot.recipeId && { recipeId: slot.recipeId }), ...(index !== takeoutIndex && slot.leftoverFrom !== undefined && { leftoverFromSlotId: slotIds[slot.leftoverFrom] }), score: slot.score, confidence: slot.confidence, scoreReasons: slot.reasons })),
+      ...(takeoutIndex >= 0 && { repairRevisions: [{ id: crypto.randomUUID(), createdAt: new Date().toISOString(), slotId: slotIds[takeoutIndex], kind: 'takeout' as const, takeoutContext: 'planned' as const }] }),
+    }] }
+    commit(next)
+    hydrateShoppingControls(next)
     setWeeklyPreview(undefined)
     setMessage('Weekly plan confirmed.')
   }
@@ -279,6 +287,10 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
     update((current) => ({ ...current, meals: current.meals.map((meal) => meal.id !== adaptationMealId ? meal : { ...meal, adaptations: [...(meal.adaptations ?? []), { id: crypto.randomUUID(), name: adaptationName.trim(), dinerId: adaptationDinerId, issue: adaptationIssue.trim(), solvesIssue: true, coordinatedCooking: true, noSecondEntree: true, noUnplannedProtein: true, noSeparateTimeline: true, noExtraEffort: true }] }) }))
     setAdaptationName(''); setAdaptationIssue(''); setMessage('Shared-meal adaptation saved.')
   }
+  const linkRecovery = (mealId: string, recoveryMealId: string) => {
+    if (mealId === recoveryMealId) return
+    update((current) => ({ ...current, meals: current.meals.map((meal) => meal.id !== mealId || meal.recoveryMealIds?.includes(recoveryMealId) ? meal : { ...meal, recoveryMealIds: [...(meal.recoveryMealIds ?? []), recoveryMealId] }) }))
+  }
   const feedbackPlan = feedbackTarget && state.plans.find((plan) => plan.id === feedbackTarget.planId)
   const feedbackSlot = feedbackPlan?.slots.find((slot) => slot.id === feedbackTarget?.slotId)
   const feedbackMeal = state.meals.find((meal) => meal.id === feedbackSlot?.mealId)
@@ -339,7 +351,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
         <p className="actions"><label>Week starts<input aria-label="Week starts" type="date" value={planStartDate} onChange={(event) => { setPlanStartDate(event.target.value); setWeeklyPreview(undefined) }} /></label><button onClick={previewWeeklyPlan} disabled={!planStartDate}>Preview weekly plan</button></p>
         {weeklyPreview && <div className="weekly-plan-preview">
           <h3>Weekly plan preview</h3>
-          {weeklyPreview.slots.length === 0 ? <p>No eligible household meal is available to plan.</p> : <ol>{weeklyPreview.slots.map((slot) => <li key={slot.date}><strong>{slot.date}</strong>: {state.meals.find((meal) => meal.id === slot.mealId)?.name} {slot.leftoverFrom !== undefined && '(planned leftovers)'}<br /><small>{slot.confidence} · {slot.score} reliability points. {slot.reasons.join(' ')}</small></li>)}</ol>}
+          {weeklyPreview.slots.length === 0 ? <p>No eligible household meal is available to plan.</p> : <ol>{weeklyPreview.slots.map((slot, index) => <li key={slot.date}><strong>{slot.date}</strong>: {plannedTakeoutDate === slot.date ? 'Takeout' : state.meals.find((meal) => meal.id === slot.mealId)?.name} {slot.leftoverFrom !== undefined && '(planned leftovers)'} <button onClick={() => setPlannedTakeoutDate(plannedTakeoutDate === slot.date ? undefined : slot.date)} disabled={weeklyPreview.slots.some((item) => item.leftoverFrom === index)}> {plannedTakeoutDate === slot.date ? 'Use planned meal' : `Plan takeout for ${slot.date}`}</button><br /><small>{slot.confidence} · {slot.score} reliability points. {slot.reasons.join(' ')}</small></li>)}</ol>}
           {weeklyPreview.excluded.length > 0 && <p>Excluded: {weeklyPreview.excluded.map((item) => `${state.meals.find((meal) => meal.id === item.mealId)?.name}: ${item.reason}`).join(' ')}</p>}
           {weeklyPreview.optional && <div><p>Optional unfamiliar meal: {state.meals.find((meal) => meal.id === weeklyPreview.optional?.mealId)?.name}. No action keeps proven fallback {state.meals.find((meal) => meal.id === weeklyPreview.optional?.fallbackMealId)?.name}.</p><p className="actions"><button onClick={() => chooseOptionalMeal('use')}>Use this meal</button><button onClick={() => chooseOptionalMeal('adapt')}>Make it work for us</button><button onClick={() => chooseOptionalMeal('reject')}>Not for us</button></p>{optionalAction !== 'fallback' && <p>{optionalAction === 'adapt' && !state.meals.find((meal) => meal.id === weeklyPreview.optional?.mealId)?.adaptations?.length ? 'No saved shared adaptation is available, so the proven fallback remains selected.' : optionalAction === 'reject' ? 'The proven fallback remains selected.' : weeklyPreview.slots.some((slot) => slot.mealId === weeklyPreview.optional?.mealId) ? 'Your chosen unfamiliar meal is in this preview.' : 'That unfamiliar meal cannot fit the first cooking night, so the proven fallback remains selected.'}</p>}</div>}
           <button onClick={confirmWeeklyPlan} disabled={weeklyPreview.slots.length !== 7 || state.plans.length >= 100}>Confirm weekly plan</button>
@@ -389,6 +401,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
           <label>Shared adaptation<input maxLength={160} value={adaptationName} onChange={(event) => setAdaptationName(event.target.value)} /></label><button>Add shared adaptation</button>
           {Object.entries({ solvesIssue: 'Solves the issue', coordinatedCooking: 'One coordinated cooking session', noSecondEntree: 'No second entree', noUnplannedProtein: 'No unplanned non-staple protein', noSeparateTimeline: 'No separate timeline', noExtraEffort: 'No needless extra effort' }).map(([key, label]) => <label key={key}><input aria-label={label} type="checkbox" checked={adaptationChecks[key as keyof typeof adaptationChecks]} onChange={(event) => setAdaptationChecks((current) => ({ ...current, [key]: event.target.checked }))} /> {label}</label>)}
         </form>}
+        {state.meals.length > 1 && <p className="actions"><label>Meal needing recovery<select aria-label="Meal needing recovery" value={recoveryMealId} onChange={(event) => setRecoveryMealId(event.target.value)}><option value="">Choose a meal</option>{state.meals.map((meal) => <option key={meal.id} value={meal.id}>{meal.name}</option>)}</select></label><label>Recovery meal<select aria-label="Recovery meal" value={recoveryTargetId} onChange={(event) => setRecoveryTargetId(event.target.value)}><option value="">Choose a recovery meal</option>{state.meals.filter((meal) => meal.id !== recoveryMealId).map((meal) => <option key={meal.id} value={meal.id}>{meal.name}</option>)}</select></label><button disabled={!recoveryMealId || !recoveryTargetId} onClick={() => { linkRecovery(recoveryMealId, recoveryTargetId); setRecoveryTargetId('') }}>Link recovery meal</button></p>}
         <ul className="meal-list">
           {state.meals.map((meal) => {
             const recipes = state.recipes.filter((recipe) => recipe.mealId === meal.id || meal.recipeIds?.includes(recipe.id))

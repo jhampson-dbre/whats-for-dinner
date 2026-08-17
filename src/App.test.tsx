@@ -312,6 +312,32 @@ describe('weekly planning', () => {
 
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({ meals: expect.arrayContaining([expect.objectContaining({ id: 'new', active: false })]) })
   })
+
+  it('records user-selected planned takeout as a takeout revision, not a planner meal', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-a', name: 'Soup', active: true, safetyReview: 'approved' })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Plan takeout for 2026-08-17' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
+    const plan = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0]
+    expect(plan.slots).toContainEqual(expect.not.objectContaining({ mealId: expect.anything() }))
+    expect(plan.repairRevisions).toEqual([expect.objectContaining({ kind: 'takeout', takeoutContext: 'planned' })])
+  })
+
+  it('does not carry an old plan incomplete-meal acknowledgement into a new plan', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'soup', name: 'Soup', active: true, safetyReview: 'approved' })
+    state.plans.push({ id: 'old', confirmed: true, slots: [{ id: 'old-slot', date: '2026-08-10', mealId: 'soup' }], shopping: { confirmedAt: '2026-08-10T00:00:00.000Z', partial: true, skippedIncompleteMealIds: ['soup'], items: [] } } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
+    expect(screen.getByRole('button', { name: 'Shopping done' })).toBeDisabled()
+  })
 })
 
 describe('shopping and repair', () => {
@@ -338,6 +364,21 @@ describe('shopping and repair', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[0].mealId).toBe('soup')
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[1].mealId).toBe('tacos')
+  })
+
+  it('links a distinct recovery meal and exposes it to plan repair', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true }, { id: 'soup', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'tacos-slot', date: '2026-08-17', mealId: 'tacos' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Meal needing recovery'), { target: { value: 'tacos' } })
+    fireEvent.change(screen.getByLabelText('Recovery meal'), { target: { value: 'soup' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Link recovery meal' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
+    expect(screen.getByRole('button', { name: 'Use recovery Soup' })).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').meals.find((meal: { id: string }) => meal.id === 'tacos').recoveryMealIds).toEqual(['soup'])
   })
 
   it('hydrates shopping controls from the saved record and keeps their stable item evidence on re-confirmation', async () => {

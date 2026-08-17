@@ -101,6 +101,7 @@ export const appStateV1Schema = z.object({
   state.plans.forEach((plan, planIndex) => plan.slots.forEach((slot, slotIndex) => {
     if (slot.mealId) requireReference(meals.has(slot.mealId), ['plans', planIndex, 'slots', slotIndex, 'mealId'], 'meal')
     if (slot.recipeId) requireReference(recipes.has(slot.recipeId), ['plans', planIndex, 'slots', slotIndex, 'recipeId'], 'recipe')
+    if (slot.recipeId && slot.mealId) requireReference(state.recipes.some((recipe) => recipe.id === slot.recipeId && (recipe.mealId === slot.mealId || state.meals.some((meal) => meal.id === slot.mealId && meal.recipeIds?.includes(recipe.id)))), ['plans', planIndex, 'slots', slotIndex, 'recipeId'], 'recipe associated with slot meal')
     if (slot.leftoverFromSlotId) requireReference(plan.slots.slice(0, slotIndex).some((value) => value.id === slot.leftoverFromSlotId), ['plans', planIndex, 'slots', slotIndex, 'leftoverFromSlotId'], 'earlier plan slot')
     slot.expectedDinerIds?.forEach((ref, refIndex) => requireReference(diners.has(ref), ['plans', planIndex, 'slots', slotIndex, 'expectedDinerIds', refIndex], 'diner'))
     if (slot.dinnerReadyAt && !slot.cookingStartedAt) ctx.addIssue({ code: 'custom', path: ['plans', planIndex, 'slots', slotIndex, 'dinnerReadyAt'], message: 'Dinner ready requires cooking start.' })
@@ -115,6 +116,7 @@ export const appStateV1Schema = z.object({
     if (variant.recipeId) requireReference(recipes.has(variant.recipeId), ['plans', planIndex, 'variants', variantIndex, 'recipeId'], 'recipe')
   }))
   state.plans.forEach((plan, planIndex) => plan.repairRevisions?.forEach((revision, revisionIndex) => {
+    if (revision.slotId) requireReference(plan.slots.some((slot) => slot.id === revision.slotId), ['plans', planIndex, 'repairRevisions', revisionIndex, 'slotId'], 'plan slot')
     if (revision.leftoverLotId) requireReference(leftovers.has(revision.leftoverLotId), ['plans', planIndex, 'repairRevisions', revisionIndex, 'leftoverLotId'], 'leftover lot')
     if (revision.adaptationId) requireReference(adaptations.has(revision.adaptationId), ['plans', planIndex, 'repairRevisions', revisionIndex, 'adaptationId'], 'adaptation')
   }))
