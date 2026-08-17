@@ -228,7 +228,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
       <section aria-labelledby="weekly-plan-heading">
         <h2 id="weekly-plan-heading">Weekly plan</h2>
         <p>Meals marked to cover leftovers reduce cooking nights; all other nights stay cooking nights.</p>
-        <p className="actions"><label>Week starts<input aria-label="Week starts" type="date" value={planStartDate} onChange={(event) => setPlanStartDate(event.target.value)} /></label><button onClick={previewWeeklyPlan} disabled={!planStartDate}>Preview weekly plan</button></p>
+        <p className="actions"><label>Week starts<input aria-label="Week starts" type="date" value={planStartDate} onChange={(event) => { setPlanStartDate(event.target.value); setWeeklyPreview(undefined) }} /></label><button onClick={previewWeeklyPlan} disabled={!planStartDate}>Preview weekly plan</button></p>
         {weeklyPreview && <div className="weekly-plan-preview">
           <h3>Weekly plan preview</h3>
           {weeklyPreview.slots.length === 0 ? <p>No eligible household meal is available to plan.</p> : <ol>{weeklyPreview.slots.map((slot) => <li key={slot.date}><strong>{slot.date}</strong>: {state.meals.find((meal) => meal.id === slot.mealId)?.name} {slot.leftoverFrom !== undefined && '(planned leftovers)'}<br /><small>{slot.confidence} · {slot.score} reliability points. {slot.reasons.join(' ')}</small></li>)}</ol>}

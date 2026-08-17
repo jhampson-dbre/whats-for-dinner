@@ -240,6 +240,20 @@ describe('weekly planning', () => {
     expect(screen.queryByRole('button', { name: 'Confirm weekly plan' })).not.toBeInTheDocument()
   })
 
+  it('clears a weekly preview when its week-start date changes', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-a', name: 'Soup', active: true, safetyReview: 'approved' })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    expect(screen.getByRole('heading', { name: 'Weekly plan preview' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-24' } })
+
+    expect(screen.queryByRole('heading', { name: 'Weekly plan preview' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Confirm weekly plan' })).not.toBeInTheDocument()
+  })
+
   it('does not preview a plan without a week-start date', () => {
     render(<App />)
     fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '' } })
