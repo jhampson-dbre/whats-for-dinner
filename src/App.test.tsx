@@ -45,6 +45,22 @@ describe('backup import', () => {
     })
   })
 
+  it('hydrates imported shopping evidence before re-confirming it', async () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, recipeIds: ['tacos-recipe'] }, { id: 'soup', name: 'Soup', active: true })
+    state.recipes.push({ id: 'tacos-recipe', title: 'Tacos', mealId: 'tacos', ingredients: ['1 cup tomatoes'] })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'tacos-slot', date: '2026-08-17', mealId: 'tacos', recipeId: 'tacos-recipe' }, { id: 'soup-slot', date: '2026-08-18', mealId: 'soup' }], shopping: { confirmedAt: '2026-08-17T12:00:00.000Z', partial: true, skippedIncompleteMealIds: ['soup'], items: [{ id: 'tacos-slot:0', label: '1 cup tomatoes', sourceLines: ['1 cup tomatoes'], mealIds: ['tacos'], perishable: true, availability: 'unavailable' }] } } as never)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const { container } = render(<App />)
+
+    fireEvent.change(container.querySelector('input[accept="application/json"]')!, { target: { files: [{ text: () => Promise.resolve(JSON.stringify(state)) }] } })
+    await waitFor(() => expect(screen.getByLabelText('Unavailable 1 cup tomatoes')).toBeChecked())
+    expect(screen.getByLabelText('Perishable 1 cup tomatoes')).toBeChecked()
+    expect(screen.getByText('This saved shopping record is partial.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Shopping done' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].shopping).toMatchObject({ partial: true, skippedIncompleteMealIds: ['soup'], items: [{ id: 'tacos-slot:0', perishable: true, availability: 'unavailable' }] })
+  })
+
   it('keeps the current backup when reading an import file fails', async () => {
     localStorage.setItem(APP_STATE_STORAGE_KEY, backup('old-meal'))
     const { container } = render(<App />)

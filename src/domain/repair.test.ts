@@ -42,6 +42,15 @@ describe('repair', () => {
     expect(repair.plan.slots.find((slot) => slot.id === 'future')).toMatchObject({ leftoverFromSlotId: undefined })
   })
 
+  it('clears unfinished dependencies when confirmed leftovers keep the source meal', () => {
+    const dependent = { ...plan, slots: [{ ...plan.slots[0] }, { ...plan.slots[1] }, { ...plan.slots[2], leftoverFromSlotId: 'target' }] }
+    const repair = previewRepair(dependent, { slotId: 'target', kind: 'leftovers', mealId: 'tacos', leftoverLotId: 'lot-1' })
+
+    expect(repair.changedSlotIds).toEqual(['target', 'future'])
+    expect(repair.plan.slots.find((slot) => slot.id === 'target')).toMatchObject({ leftoverLotIds: ['lot-1'] })
+    expect(repair.plan.slots.find((slot) => slot.id === 'future')).toMatchObject({ leftoverFromSlotId: undefined })
+  })
+
   it('rejects swaps that would disturb leftover links', () => {
     const dependent = { ...plan, slots: [{ ...plan.slots[0] }, { ...plan.slots[1] }, { ...plan.slots[2], leftoverFromSlotId: 'target' }] }
     expect(() => previewRepair(dependent, { slotId: 'target', kind: 'swap', swapSlotId: 'future' })).toThrow('leftover')

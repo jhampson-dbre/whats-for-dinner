@@ -21,6 +21,14 @@ function reducer(_state: AppStateV1, action: Action): AppStateV1 {
   return action.state
 }
 
+function shoppingControls(state: AppStateV1) {
+  const shopping = [...state.plans].reverse().find((plan) => plan.confirmed)?.shopping
+  const groceries = shopping ? buildGroceryList(state).items : []
+  const itemId = (item: NonNullable<typeof shopping>['items'][number]) => item.id ?? groceries.find((candidate) => candidate.label === item.label && candidate.sourceLines.join('\n') === item.sourceLines.join('\n') && candidate.mealIds.join('\n') === item.mealIds.join('\n'))?.id
+  const itemIds = (matches: (item: NonNullable<typeof shopping>['items'][number]) => boolean) => new Set(shopping?.items.flatMap((item) => { const id = itemId(item); return matches(item) && id ? [id] : [] }) ?? [])
+  return { unavailable: itemIds((item) => item.availability === 'unavailable'), skipped: itemIds((item) => item.availability === 'skipped'), perishable: itemIds((item) => item.perishable), skippedIncompleteMeals: new Set(shopping?.skippedIncompleteMealIds) }
+}
+
 function sameRestrictions(a: AppStateV1['household']['hardRestrictions'], b: AppStateV1['household']['hardRestrictions']): boolean {
   return a.length === b.length && a.every((restriction, index) => restriction.id === b[index].id && restriction.label === b[index].label && restriction.dinerId === b[index].dinerId)
 }
@@ -64,9 +72,7 @@ export default function App() {
 
 function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
   const [state, dispatch] = useReducer(reducer, initialState)
-  const initialShopping = [...initialState.plans].reverse().find((plan) => plan.confirmed)?.shopping
-  const initialGroceryItems = initialShopping ? buildGroceryList(initialState).items : []
-  const initialShoppingItemId = (item: NonNullable<typeof initialShopping>['items'][number]) => item.id ?? initialGroceryItems.find((candidate) => candidate.label === item.label && candidate.sourceLines.join('\n') === item.sourceLines.join('\n') && candidate.mealIds.join('\n') === item.mealIds.join('\n'))?.id
+  const [initialShoppingControls] = useState(() => shoppingControls(initialState))
   const [saveStatus, setSaveStatus] = useState<'saved' | 'unsaved'>('saved')
   const [message, setMessage] = useState('')
   const [dinerName, setDinerName] = useState('')
@@ -86,10 +92,10 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
   const [planStartDate, setPlanStartDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [weeklyPreview, setWeeklyPreview] = useState<ReturnType<typeof buildWeeklyPlan>>()
   const [optionalAction, setOptionalAction] = useState<'fallback' | 'use' | 'adapt' | 'reject'>('fallback')
-  const [unavailableItems, setUnavailableItems] = useState<Set<string>>(() => new Set(initialShopping?.items.flatMap((item) => item.availability === 'unavailable' && initialShoppingItemId(item) ? [initialShoppingItemId(item)!] : [])))
-  const [skippedItems, setSkippedItems] = useState<Set<string>>(() => new Set(initialShopping?.items.flatMap((item) => item.availability === 'skipped' && initialShoppingItemId(item) ? [initialShoppingItemId(item)!] : [])))
-  const [perishableItems, setPerishableItems] = useState<Set<string>>(() => new Set(initialShopping?.items.flatMap((item) => item.perishable && initialShoppingItemId(item) ? [initialShoppingItemId(item)!] : [])))
-  const [skippedIncompleteMeals, setSkippedIncompleteMeals] = useState<Set<string>>(() => new Set(initialShopping?.skippedIncompleteMealIds))
+  const [unavailableItems, setUnavailableItems] = useState<Set<string>>(() => initialShoppingControls.unavailable)
+  const [skippedItems, setSkippedItems] = useState<Set<string>>(() => initialShoppingControls.skipped)
+  const [perishableItems, setPerishableItems] = useState<Set<string>>(() => initialShoppingControls.perishable)
+  const [skippedIncompleteMeals, setSkippedIncompleteMeals] = useState<Set<string>>(() => initialShoppingControls.skippedIncompleteMeals)
   const [perishableAcknowledged, setPerishableAcknowledged] = useState(false)
   const [repairOpen, setRepairOpen] = useState(false)
   const [repairPreview, setRepairPreview] = useState<RepairPreview>()
@@ -105,6 +111,13 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
     setWeeklyPreview(undefined)
     setRepairPreview(undefined)
     dispatch({ type: 'replace', state: next })
+  }
+  const hydrateShoppingControls = (next: AppStateV1) => {
+    const controls = shoppingControls(next)
+    setUnavailableItems(controls.unavailable)
+    setSkippedItems(controls.skipped)
+    setPerishableItems(controls.perishable)
+    setSkippedIncompleteMeals(controls.skippedIncompleteMeals)
   }
 
   const reset = () => {
@@ -174,7 +187,9 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
         try {
           const imported = importAppState(raw)
           if (!window.confirm('Replace all current app data with this backup?')) return
-          commit(sameRestrictions(state.household.hardRestrictions, imported.household.hardRestrictions) ? imported : { ...imported, meals: imported.meals.map((meal) => ({ ...meal, safetyReview: 'unknown' })) })
+          const next: AppStateV1 = sameRestrictions(state.household.hardRestrictions, imported.household.hardRestrictions) ? imported : { ...imported, meals: imported.meals.map((meal) => ({ ...meal, safetyReview: 'unknown' })) }
+          commit(next)
+          hydrateShoppingControls(next)
           setMessage('Backup imported.')
         } catch {
           setMessage('That file is not a valid V1 backup.')
