@@ -597,16 +597,19 @@ describe('cooking outcomes', () => {
 
   it('keeps feedback actions available for older confirmed plans', () => {
     const state = createEmptyAppState()
-    state.meals.push({ id: 'tacos', name: 'Tacos', active: true })
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true }, { id: 'soup', name: 'Soup', active: true })
     state.plans.push(
-      { id: 'old', confirmed: true, slots: [{ id: 'old-slot', date: '2026-08-15', mealId: 'tacos', cookingStartedAt: '2020-01-01T17:00:00.000Z', dinnerReadyAt: '2020-01-01T17:20:00.000Z', feedbackEligibleAt: '2020-01-01T18:00:00.000Z', feedbackDismissed: true }] },
+      { id: 'old', confirmed: true, slots: [{ id: 'old-slot', date: '2026-08-15', mealId: 'tacos', cookingStartedAt: '2020-01-01T17:00:00.000Z', dinnerReadyAt: '2020-01-01T17:20:00.000Z', feedbackEligibleAt: '2020-01-01T18:00:00.000Z', feedbackDismissed: true }, { id: 'old-cook', date: '2026-08-15', mealId: 'tacos' }] },
       { id: 'middle', confirmed: true, slots: [{ id: 'middle-slot', date: '2026-08-16', mealId: 'tacos', cookingStartedAt: '2020-01-01T17:00:00.000Z', dinnerReadyAt: '2020-01-01T17:20:00.000Z', feedbackEligibleAt: '2020-01-01T18:00:00.000Z' }] },
-      { id: 'new', confirmed: true, slots: [{ id: 'new-slot', date: '2026-08-17', mealId: 'tacos' }] },
+      { id: 'new', confirmed: true, slots: [{ id: 'new-slot', date: '2026-08-17', mealId: 'soup' }] },
     )
     state.outcomes.push({ id: 'middle-outcome', planId: 'middle', planSlotId: 'middle-slot', mealId: 'tacos', acceptance: 'accepted' })
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
     render(<App />)
+    expect(screen.queryByRole('button', { name: 'Start cooking Tacos' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Dinner’s ready Tacos' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Soup' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
     expect(screen.getByRole('heading', { name: 'Dinner feedback' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Not now' }))
