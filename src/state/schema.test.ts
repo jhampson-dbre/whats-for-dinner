@@ -77,6 +77,17 @@ describe('V1 state validation', () => {
     expect(importAppState(JSON.stringify(state))).toMatchObject({ plans: expect.arrayContaining([expect.objectContaining({ shopping: expect.objectContaining({ items: expect.arrayContaining([expect.objectContaining({ availability: 'unavailable' })]) }), repairRevisions: expect.arrayContaining([expect.objectContaining({ kind: 'takeout' })]) })]) })
   })
 
+  it('rejects shopping references to unknown meals', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan-1', confirmed: true, slots: [{ id: 'slot-1', date: '2026-08-17', mealId: 'meal-1' }], shopping: { confirmedAt: '2026-08-16T00:00:00.000Z', partial: true, skippedIncompleteMealIds: ['missing-meal'], items: [{ label: '1 cup tomatoes', sourceLines: ['1 cup tomatoes'], mealIds: ['meal-1'], perishable: false, availability: 'available' }] } } as never)
+
+    expect(() => importAppState(JSON.stringify(state))).toThrow('Unknown meal reference')
+    state.plans[0].shopping!.skippedIncompleteMealIds = ['meal-1']
+    state.plans[0].shopping!.items[0].mealIds = ['missing-meal']
+    expect(() => importAppState(JSON.stringify(state))).toThrow('Unknown meal reference')
+  })
+
   it('restores surrounding whitespace exactly', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'meal-1', name: ' Tacos ', active: true })

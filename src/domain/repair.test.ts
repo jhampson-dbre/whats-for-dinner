@@ -32,4 +32,18 @@ describe('repair', () => {
     expect(previewRepair(recipePlan, { slotId: 'target', kind: 'recovery', mealId: 'soup' }).plan.slots.find((slot) => slot.id === 'target')).toMatchObject({ mealId: 'soup', recipeId: undefined })
     expect(previewRepair(recipePlan, { slotId: 'target', kind: 'leftovers', mealId: 'soup', leftoverLotId: 'lot-1' }).plan.slots.find((slot) => slot.id === 'target')).toMatchObject({ mealId: 'soup', recipeId: undefined, leftoverLotIds: ['lot-1'] })
   })
+
+  it('clears target and unfinished dependent leftover links when replacing a source meal', () => {
+    const dependent = { ...plan, slots: [{ ...plan.slots[0] }, { ...plan.slots[1], leftoverFromSlotId: 'done', leftoverLotIds: ['target-lot'] }, { ...plan.slots[2], leftoverFromSlotId: 'target' }] }
+    const repair = previewRepair(dependent, { slotId: 'target', kind: 'recovery', mealId: 'pasta' })
+
+    expect(repair.changedSlotIds).toEqual(['target', 'future'])
+    expect(repair.plan.slots.find((slot) => slot.id === 'target')).toMatchObject({ leftoverFromSlotId: undefined, leftoverLotIds: undefined })
+    expect(repair.plan.slots.find((slot) => slot.id === 'future')).toMatchObject({ leftoverFromSlotId: undefined })
+  })
+
+  it('rejects swaps that would disturb leftover links', () => {
+    const dependent = { ...plan, slots: [{ ...plan.slots[0] }, { ...plan.slots[1] }, { ...plan.slots[2], leftoverFromSlotId: 'target' }] }
+    expect(() => previewRepair(dependent, { slotId: 'target', kind: 'swap', swapSlotId: 'future' })).toThrow('leftover')
+  })
 })

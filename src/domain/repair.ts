@@ -10,11 +10,15 @@ export function previewRepair(plan: Plan, choice: RepairChoice): RepairPreview {
   if (choice.kind === 'swap') {
     const other = plan.slots.find((item) => item.id === choice.swapSlotId)
     if (!other || other.dinnerReadyAt) throw new Error('Choose another unfinished plan slot.')
+    const hasLeftoverLink = (item: Slot) => Boolean(item.leftoverFromSlotId || item.leftoverLotIds?.length || plan.slots.some((candidate) => !candidate.dinnerReadyAt && candidate.leftoverFromSlotId === item.id))
+    if (hasLeftoverLink(slot) || hasLeftoverLink(other)) throw new Error('Cannot swap a slot with leftover links.')
     return { plan: { ...plan, slots: plan.slots.map((item) => item.id === slot.id ? { ...item, mealId: other.mealId, recipeId: other.recipeId } : item.id === other.id ? { ...item, mealId: slot.mealId, recipeId: slot.recipeId } : item) }, changedSlotIds: [slot.id, other.id], choice }
   }
   const replacingMeal = choice.mealId !== undefined && choice.mealId !== slot.mealId
-  const replacement = { ...slot, ...(choice.mealId && { mealId: choice.mealId }), ...(choice.recipeId ? { recipeId: choice.recipeId } : replacingMeal || choice.kind === 'leftovers' || choice.kind === 'takeout' ? { recipeId: undefined } : {}), ...(choice.kind === 'leftovers' && { leftoverLotIds: choice.leftoverLotId ? [choice.leftoverLotId] : [], leftoverFromSlotId: undefined }), ...(choice.kind === 'takeout' && { mealId: undefined, recipeId: undefined, leftoverLotIds: undefined }) }
-  return { plan: { ...plan, slots: plan.slots.map((item) => item.id === slot.id ? replacement : item) }, changedSlotIds: [slot.id], choice }
+  const clearsLeftovers = replacingMeal || choice.kind === 'takeout'
+  const replacement = { ...slot, ...(choice.mealId && { mealId: choice.mealId }), ...(choice.recipeId ? { recipeId: choice.recipeId } : replacingMeal || choice.kind === 'leftovers' || choice.kind === 'takeout' ? { recipeId: undefined } : {}), ...(clearsLeftovers && { leftoverLotIds: undefined, leftoverFromSlotId: undefined }), ...(choice.kind === 'leftovers' && { leftoverLotIds: choice.leftoverLotId ? [choice.leftoverLotId] : [], leftoverFromSlotId: undefined }), ...(choice.kind === 'takeout' && { mealId: undefined, recipeId: undefined, leftoverLotIds: undefined }) }
+  const dependentIds = clearsLeftovers ? missingLeftoverDependencies(plan, slot.id) : []
+  return { plan: { ...plan, slots: plan.slots.map((item) => item.id === slot.id ? replacement : dependentIds.includes(item.id) ? { ...item, leftoverFromSlotId: undefined, leftoverLotIds: undefined } : item) }, changedSlotIds: [slot.id, ...dependentIds], choice }
 }
 
 export function missingLeftoverDependencies(plan: Plan, sourceSlotId: string): string[] {
