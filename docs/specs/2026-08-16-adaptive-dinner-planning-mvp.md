@@ -27,7 +27,7 @@ goals.
 - One household stored in one browser.
 - Diner names or labels and explicit hard dietary restrictions.
 - Household-level schedule exceptions; assume everyone is home otherwise.
-- Recipe Keeper candidate recipes and selection of 8-12 active household meals.
+- Recipe Keeper ZIP candidate recipes and selection of 8-12 active household meals.
 - Name-only meals with conservative provisional capabilities.
 - A seven-day plan with intentional leftovers and fewer than seven cooking nights when
   appropriate.
@@ -42,7 +42,6 @@ goals.
 
 - Accounts, invitations, multi-device synchronization, and remote persistence.
 - Individual schedule modeling.
-- Recipe Keeper bulk-export parsing until a representative export is available.
 - Generic recipe-site import.
 - Pantry inventory, store pricing, ordering, coupons, and commerce integrations.
 - Production machine-learning infrastructure.
@@ -204,63 +203,44 @@ being abandoned on constrained nights.
 
 ## Recipe Keeper import boundary
 
-The individual share page supplied during discovery exposes structured recipe HTML but
-does not permit cross-origin browser fetching. The MVP may therefore use one narrowly
-allowlisted same-origin endpoint.
+The supplied representative Recipe Keeper export contains one `recipes.html` document
+with repeated `.recipe-details` records and local image entries. The MVP imports that
+ZIP entirely in the browser. It does not add a server endpoint or retain support for
+individual share links.
 
-The browser extracts the Recipe Keeper identifier. The server accepts only that
-identifier and constructs:
+Use `fflate` only to inspect and extract the ZIP container. Require a ZIP signature,
+maximum 32 MiB selected file, at most 1,000 entries, entry names no longer than 255
+characters, and exactly one root `recipes.html`. Reject absolute, drive-qualified,
+backslash, dot-segment, encrypted, malformed, or unsupported archives. Check declared
+sizes before extraction and cap decoded `recipes.html` at 5 MiB. Never extract or open
+image entries.
 
-```text
-https://recipekeeperonline.com/recipe/<validated-id>
-```
+Parse at most 1,000 `.recipe-details` records with the native `DOMParser`. Read only
+fixture-proven Recipe Keeper fields for external recipe ID, title, source metadata,
+course/category, prep and cook duration, yield, ingredients, and instructions. Never
+render imported HTML or fetch source or image links. Bound title, source, category, and
+yield to 1 KiB each; ingredients and instructions to 500 items, 2 KiB per item, and
+128 KiB aggregate per field.
 
-The endpoint must:
+ZIP bytes, HTML, images, and normalized candidates remain transient. Zod validates
+normalized drafts before review. Malformed, unnamed, or duplicate-ID records are
+skipped with a visible count; fail when no valid candidates remain. Boundary failure
+clears transient results and leaves `AppStateV1` unchanged.
 
-- Accept `POST /api/recipekeeper-import` with a small JSON body containing only the
-  Recipe Keeper identifier; it never accepts an upstream URL.
-- Validate identifiers with a bounded URL-safe character pattern before making a
-  request.
-- Reject any other host, scheme, path, port, credentials, query, fragment, redirect,
-  or arbitrary URL.
-- Omit credentials and disable redirects.
-- Abort the upstream request after five seconds and reject responses larger than 512
-  KB, including streamed responses whose declared size is absent or incorrect.
-- Require a successful response with an HTML content type.
-- Parse only the fixture-proven fields into a narrow recipe draft.
-- Return neither raw HTML nor a remote response pass-through.
-- Persist nothing server-side.
-- Leave application state unchanged on fetch or parse failure.
-- Reject non-POST methods, non-JSON content, oversized request bodies, unknown body
-  fields, and identifiers that do not match the exact bounded schema before any fetch.
-- Do not log Recipe Keeper identifiers, request bodies, or upstream response bodies.
-
-The normalized response may contain only bounded text and arrays for title, source
-metadata, course/category, prep and cook duration, yield, ingredients, and
-instructions. Source links are metadata and are never fetched by the proxy. Recipe
-images are outside the MVP.
-
-Use a Vercel TypeScript function and `node-html-parser` for the fixture-proven
-microdata selectors. Return explicit errors for invalid identifiers, unavailable or
-unparseable recipes, upstream timeout/failure, and oversized responses. Do not enable
-cross-origin access; the application calls the function from the same origin.
-
-This is an importer endpoint, not a generic proxy or import framework. Revisit it only
-if the MVP succeeds.
-
-Same-origin access is not an abuse control. Before enabling the importer on a public
-deployment, use provider-native rate and spend protection. If the selected hosting
-plan cannot bound public prototype exposure, keep the importer disabled outside a
-controlled preview. Do not add custom authentication or a proxy framework for the MVP.
-TREK-3 must verify that protection or verify that the importer remains preview-only or
-disabled; escalate before public enablement if neither condition can be met.
+Candidate review offers **Add as a new meal**, **Add as a version of an existing
+meal**, and **Save recipe only**, with contextual title suggestions. Only explicit
+confirmation dispatches normalized recipe and meal changes through the reducer. Never
+silently merge or overwrite an existing recipe. This is a fixture-specific local
+importer, not a generic ZIP or recipe-import framework; revisit share links only if
+users cannot obtain exports.
 
 ## State and architecture
 
 Use a React and TypeScript Vite application hosted on Vercel. Use plain CSS with design
 tokens, native browser APIs, `useReducer`, local storage, and file-based state
 export/import. Use Zod at the persisted-state, uploaded-backup, and importer boundaries.
-Add Vitest, React Testing Library, ESLint, and one late Playwright smoke
+Use `fflate` for the local Recipe Keeper ZIP boundary and native `DOMParser` for its
+HTML. Add Vitest, React Testing Library, ESLint, and one late Playwright smoke
 flow. Do not add a router, global-state package, component framework, utility-CSS
 framework, database, auth, repository layer, or live AI dependency.
 
@@ -325,8 +305,8 @@ loads, validates, saves, exports, and imports application state.
    name-only meals, and safety review.
 
 3. **TREK-3: Recipe Keeper importer**
-   Add the allowlisted endpoint, fixture parser, preview, contextual association, and
-   explicit import destination.
+   Add bounded local ZIP selection and extraction, the fixture parser, candidate
+   search/preview, contextual association, and explicit import destination.
 
 4. **TREK-4: Weekly planning**
    Add deterministic scoring, explanations, confidence, intentional leftovers, and
@@ -343,12 +323,6 @@ loads, validates, saves, exports, and imports application state.
 Each task depends on the preceding task. Trekker is the durable execution source of
 truth.
 
-Implementation remains paused. Before dispatching TREK-1, commit this canonical plan
-and align TREK-1 evidence with V1 persistence/reload, malformed and unsupported-version
-recovery without overwrite, and whole-document import replacement. TREK-1 must state
-that no migration is required before V2. An `in_progress` tracker status does not
-override this implementation pause.
-
 ## Verification
 
 Use focused TDD for every behavior slice. After each task, run:
@@ -363,9 +337,10 @@ Use pure fixtures for import parsing, scoring, exclusions, grocery merging, repa
 leftovers, and learning. Storage checks cover V1 load/save/reload, malformed and future
 version recovery without overwrite, whole-document import replacement, write failure,
 and cooking/feedback restoration after reload. Importer checks cover rejection before
-fetch, redirects, timeout, content type, declared and streamed size limits, bounded
-output, and unchanged application state on failure. Planner checks cover unknown
-dietary safety remaining ineligible until explicit confirmation. Use Testing Library
+extraction for invalid signature, file/entry/name/path limits, missing or duplicate
+`recipes.html`, encrypted or unsupported compression, decoded size, malformed records,
+duplicate IDs, bounded output, and unchanged application state on failure. Planner
+checks cover unknown dietary safety remaining ineligible until explicit confirmation. Use Testing Library
 for the task's primary interaction flow. After the final task, add one browser smoke
 path for onboarding -> plan -> shop -> cook -> feedback. A broad end-to-end matrix is
 not required. Add migration fixtures only when a later schema version exists.
