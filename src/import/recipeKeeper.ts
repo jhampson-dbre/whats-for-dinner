@@ -47,7 +47,6 @@ function entries(bytes: Uint8Array): Entry[] {
     if (flags & 0x41 || method !== 0 && method !== 8 || compressedSize > MAX_FILE_BYTES || nameLength > 255 || offset + 46 + nameLength + extraLength + commentLength > bytes.length) throw new Error('The ZIP archive contains unsupported entries.')
     const name = strFromU8(bytes.subarray(offset + 46, offset + 46 + nameLength))
     if (!validName(name)) throw new Error('The ZIP archive contains an unsafe path.')
-    if (size > MAX_HTML_BYTES) throw new Error(name === 'recipes.html' ? 'recipes.html exceeds 5 MiB.' : 'The ZIP archive contains unsupported entries.')
     output.push({ name, flags, method, compressedSize, size, localOffset })
     offset += 46 + nameLength + extraLength + commentLength
   }
@@ -61,7 +60,9 @@ function extractHtml(bytes: Uint8Array, entry: Entry): string {
   if (flags !== entry.flags || flags & 0x41 || method !== entry.method || nameLength > 255 || offset + 30 + nameLength + extraLength > bytes.length || strFromU8(bytes.subarray(offset + 30, offset + 30 + nameLength)) !== entry.name || (!(flags & 8) && (compressedSize !== entry.compressedSize || size !== entry.size))) throw new Error('The ZIP archive is malformed.')
   const start = offset + 30 + nameLength + extraLength
   if (start + entry.compressedSize > bytes.length) throw new Error('The ZIP archive is malformed.')
-  const decoded = entry.method === 0 ? bytes.slice(start, start + entry.compressedSize) : inflateSync(bytes.subarray(start, start + entry.compressedSize))
+  if (entry.size > MAX_HTML_BYTES || entry.method === 0 && entry.compressedSize > MAX_HTML_BYTES) throw new Error('recipes.html exceeds 5 MiB.')
+  const compressed = bytes.subarray(start, start + entry.compressedSize)
+  const decoded = entry.method === 0 ? compressed : inflateSync(compressed, { out: new Uint8Array(entry.size + 1) })
   if (decoded.length !== entry.size || decoded.length > MAX_HTML_BYTES) throw new Error('recipes.html exceeds 5 MiB.')
   return strFromU8(decoded)
 }

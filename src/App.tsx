@@ -138,6 +138,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
   const onRecipeKeeperImport = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
+    if (file.size > 32 * 1024 * 1024) { setCandidates([]); setSelectedCandidate(''); setMessage('The ZIP file exceeds 32 MiB.'); event.target.value = ''; return }
     void file.arrayBuffer().then((buffer) => readRecipeKeeperZip(new Uint8Array(buffer))).then((result) => {
       setCandidates(result.candidates); setSkipped(result.skipped); setSelectedCandidate(result.candidates[0].externalId); setMessage(`Found ${result.candidates.length} recipes${result.skipped ? `; skipped ${result.skipped}.` : '.'}`)
     }).catch((error: unknown) => {
@@ -151,6 +152,9 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
     const targetMeal = destination === 'existing' ? state.meals.find((meal) => meal.id === existingMealId) : undefined
     if (destination === 'existing' && !targetMeal) { setMessage('Choose an existing meal first.'); return }
     if (destination === 'new' && candidate.title.length > 160) { setMessage('Save recipe only or choose an existing meal; this title is too long for a new meal.'); return }
+    if (state.recipes.length >= 1000) { setMessage('Recipe storage is full; remove a recipe before importing.'); return }
+    if (destination === 'new' && state.meals.length >= 500) { setMessage('Meal storage is full; save recipe only or choose an existing meal.'); return }
+    if (targetMeal && (targetMeal.recipeIds?.length ?? 0) >= 50) { setMessage('That meal already has the maximum number of recipes.'); return }
     if (!window.confirm(`Save ${candidate.title}?`)) return
     const recipeId = crypto.randomUUID(); const mealId = targetMeal?.id ?? (destination === 'new' ? crypto.randomUUID() : undefined)
     const recipe = { id: recipeId, externalId: candidate.externalId, title: candidate.title, ...(mealId && { mealId }), source: { provider: 'Recipe Keeper', ...(candidate.source && { reference: candidate.source }) }, ...(candidate.category && { category: candidate.category }), ...(candidate.prepMinutes !== undefined && { prepMinutes: candidate.prepMinutes }), ...(candidate.cookMinutes !== undefined && { cookMinutes: candidate.cookMinutes }), ...(candidate.yield && { yield: candidate.yield }), ...(candidate.ingredients && { ingredients: candidate.ingredients }), ...(candidate.instructions && { instructions: candidate.instructions }) }

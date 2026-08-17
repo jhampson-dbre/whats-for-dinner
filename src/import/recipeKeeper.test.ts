@@ -12,6 +12,9 @@ const duplicateRecipesDocument = () => {
   data.setUint16(end + 8, 2, true); data.setUint16(end + 10, 2, true); data.setUint32(end + 12, record.length * 2, true)
   return output
 }
+const aggregateHtml = (field: 'ingredients' | 'instructions') => field === 'ingredients'
+  ? fixture.replace('</div>\n    <div itemprop="recipeDirections"', `${Array.from({ length: 65 }, () => `<p>${'x'.repeat(2048)}</p>`).join('')}</div>\n    <div itemprop="recipeDirections"`)
+  : fixture.replace('</div>\n  </article>', `${Array.from({ length: 65 }, () => `<p>${'x'.repeat(2048)}</p>`).join('')}</div>\n  </article>`)
 
 describe('Recipe Keeper ZIP boundary', () => {
   it('reads only normalized recipe candidates from the root recipes document', async () => {
@@ -42,6 +45,15 @@ describe('Recipe Keeper ZIP boundary', () => {
     await expect(readRecipeKeeperZip(zip({ 'recipes.html': html }))).rejects.toThrow(/valid recipes/)
   })
 
+  it.each([
+    ['forged decoded HTML size', (() => { const bytes = zip({ 'recipes.html': 'x'.repeat(5 * 1024 * 1024 + 1) }); const data = new DataView(bytes.buffer); data.setUint32(22, 1, true); data.setUint32(centralOffset(bytes) + 24, 1, true); return bytes })(), /5 MiB/],
+    ['too-long entry name', zip({ 'recipes.html': fixture, [`x`.repeat(256)]: 'x' }), /unsupported/],
+    ['ingredient aggregate', zip({ 'recipes.html': aggregateHtml('ingredients') }), /valid recipes/],
+    ['instruction aggregate', zip({ 'recipes.html': aggregateHtml('instructions') }), /valid recipes/],
+  ])('rejects %s without returning candidates', async (_name, bytes, message) => {
+    await expect(readRecipeKeeperZip(bytes)).rejects.toThrow(message)
+  })
+
   it('rejects file, entry, encryption, and unsupported compression limits', async () => {
     await expect(readRecipeKeeperZip(new Uint8Array(32 * 1024 * 1024 + 1))).rejects.toThrow(/32 MiB/)
     await expect(readRecipeKeeperZip(zip(Object.fromEntries(Array.from({ length: 1001 }, (_, index) => [`${index}.txt`, 'x']))))).rejects.toThrow(/too many/)
@@ -57,5 +69,10 @@ describe('Recipe Keeper ZIP boundary', () => {
     const bytes = zip({ 'recipes.html': fixture }); const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
     data.setUint16(6, 1, true)
     await expect(readRecipeKeeperZip(bytes)).rejects.toThrow(/malformed/)
+  })
+
+  it('ignores oversized image metadata and payload without opening it', async () => {
+    const bytes = zip({ 'recipes.html': fixture, 'images/large.jpg': 'x'.repeat(6 * 1024 * 1024) })
+    await expect(readRecipeKeeperZip(bytes)).resolves.toMatchObject({ candidates: [{ externalId: 'rk-1' }] })
   })
 })

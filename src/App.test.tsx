@@ -220,4 +220,48 @@ describe('Recipe Keeper import', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Save recipe only or choose an existing meal; this title is too long for a new meal.')
     expect(container.querySelectorAll('.meal-list li')).toHaveLength(0)
   })
+
+  it('clears candidates and preserves saved state after an importer failure', async () => {
+    localStorage.setItem(APP_STATE_STORAGE_KEY, backup('old-meal'))
+    render(<App />)
+    const input = screen.getByLabelText('Recipe Keeper ZIP')
+    fireEvent.change(input, { target: { files: [{ size: 1, arrayBuffer: () => Promise.resolve(zipSync({ 'recipes.html': strToU8(recipeFixture) }).buffer) }] } })
+    await screen.findByText(/Preview: Weeknight Soup/)
+    fireEvent.change(input, { target: { files: [{ size: 1, arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer) }] } })
+    await waitFor(() => expect(screen.queryByText(/Preview: Weeknight Soup/)).not.toBeInTheDocument())
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({ meals: [{ id: 'old-meal' }], recipes: [] })
+  })
+
+  it('does not read oversized files and keeps state unchanged when confirmation is cancelled', async () => {
+    const read = vi.fn(); localStorage.setItem(APP_STATE_STORAGE_KEY, backup('old-meal'))
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Recipe Keeper ZIP'), { target: { files: [{ size: 32 * 1024 * 1024 + 1, arrayBuffer: read }] } })
+    expect(read).not.toHaveBeenCalled()
+    expect(screen.getByRole('status')).toHaveTextContent('32 MiB')
+    const bytes = zipSync({ 'recipes.html': strToU8(recipeFixture) })
+    fireEvent.change(screen.getByLabelText('Recipe Keeper ZIP'), { target: { files: [{ size: bytes.length, arrayBuffer: () => Promise.resolve(bytes.buffer) }] } })
+    await screen.findByText(/Preview: Weeknight Soup/)
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({ meals: [{ id: 'old-meal' }], recipes: [] })
+  })
+
+  it.each([
+    ['recipe storage', (state: ReturnType<typeof createEmptyAppState>) => { state.recipes.push(...Array.from({ length: 1000 }, (_, index) => ({ id: `recipe-${index}`, title: 'Saved' }))) }, 'Recipe storage is full'],
+    ['meal storage', (state: ReturnType<typeof createEmptyAppState>) => { state.meals.push(...Array.from({ length: 500 }, (_, index) => ({ id: `meal-${index}`, name: 'Saved', active: true }))) }, 'Meal storage is full'],
+    ['meal recipe links', (state: ReturnType<typeof createEmptyAppState>) => { const recipeIds = Array.from({ length: 50 }, (_, index) => `recipe-${index}`); state.recipes.push(...recipeIds.map((id) => ({ id, title: 'Saved' }))); state.meals.push({ id: 'meal-1', name: 'Saved', active: true, recipeIds }) }, 'maximum number of recipes'],
+  ])('does not dispatch when %s is at capacity', async (_name, prepare, message) => {
+    const state = createEmptyAppState(); prepare(state); localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    render(<App />)
+    const bytes = zipSync({ 'recipes.html': strToU8(recipeFixture) })
+    fireEvent.change(screen.getByLabelText('Recipe Keeper ZIP'), { target: { files: [{ size: bytes.length, arrayBuffer: () => Promise.resolve(bytes.buffer) }] } })
+    await screen.findByText(/Preview: Weeknight Soup/)
+    if (message === 'maximum number of recipes') {
+      fireEvent.click(screen.getByLabelText('Add as a version of an existing meal'))
+      fireEvent.change(screen.getByLabelText('Existing meal'), { target: { value: 'meal-1' } })
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }))
+    expect(screen.getByRole('status')).toHaveTextContent(message)
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toEqual(state)
+  })
 })
