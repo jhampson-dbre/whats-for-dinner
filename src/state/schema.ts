@@ -90,7 +90,10 @@ export const appStateV1Schema = z.object({
   state.household.hardRestrictions.forEach((value, index) => { if (value.dinerId) requireReference(diners.has(value.dinerId), ['household', 'hardRestrictions', index, 'dinerId'], 'diner') })
   state.recipes.forEach((value, index) => { if (value.mealId) requireReference(meals.has(value.mealId), ['recipes', index, 'mealId'], 'meal') })
   state.meals.forEach((value, index) => {
-    value.recipeIds?.forEach((ref, refIndex) => requireReference(recipes.has(ref), ['meals', index, 'recipeIds', refIndex], 'recipe'))
+    value.recipeIds?.forEach((ref, refIndex) => {
+      requireReference(recipes.has(ref), ['meals', index, 'recipeIds', refIndex], 'recipe')
+      if (state.recipes.some((recipe) => recipe.id === ref && recipe.mealId && recipe.mealId !== value.id)) ctx.addIssue({ code: 'custom', path: ['meals', index, 'recipeIds', refIndex], message: 'Recipe belongs to another meal.' })
+    })
     value.adaptations?.forEach((adaptation, adaptationIndex) => {
       if (adaptation.mealId) requireReference(meals.has(adaptation.mealId), ['meals', index, 'adaptations', adaptationIndex, 'mealId'], 'meal')
       if (adaptation.recipeId) requireReference(recipes.has(adaptation.recipeId), ['meals', index, 'adaptations', adaptationIndex, 'recipeId'], 'recipe')

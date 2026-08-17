@@ -381,6 +381,24 @@ describe('shopping and repair', () => {
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').meals.find((meal: { id: string }) => meal.id === 'tacos').recoveryMealIds).toEqual(['soup'])
   })
 
+  it('does not add recovery links beyond the meal limit', () => {
+    const state = createEmptyAppState()
+    const recoveryMealIds = Array.from({ length: 50 }, (_, index) => `recovery-${index}`)
+    state.meals.push(
+      { id: 'tacos', name: 'Tacos', active: true, recoveryMealIds },
+      { id: 'soup', name: 'Soup', active: true },
+      ...recoveryMealIds.map((id) => ({ id, name: id, active: true })),
+    )
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Meal needing recovery'), { target: { value: 'tacos' } })
+    fireEvent.change(screen.getByLabelText('Recovery meal'), { target: { value: 'soup' } })
+    expect(screen.getByRole('button', { name: 'Link recovery meal' })).toBeDisabled()
+
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').meals.find((meal: { id: string }) => meal.id === 'tacos').recoveryMealIds).toEqual(recoveryMealIds)
+  })
+
   it('hydrates shopping controls from the saved record and keeps their stable item evidence on re-confirmation', async () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'tacos', name: 'Tacos', active: true, recipeIds: ['tacos-recipe'] })

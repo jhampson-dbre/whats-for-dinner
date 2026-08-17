@@ -30,6 +30,14 @@ describe('V1 state validation', () => {
     expect(() => importAppState(JSON.stringify(state))).toThrow()
   })
 
+  it('rejects a meal recipe link that contradicts the recipe owner', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Soup', active: true, recipeIds: ['recipe-1'] }, { id: 'meal-2', name: 'Pasta', active: true })
+    state.recipes.push({ id: 'recipe-1', title: 'Soup', mealId: 'meal-2' })
+
+    expect(() => importAppState(JSON.stringify(state))).toThrow('Recipe belongs to another meal')
+  })
+
   it('rejects duplicate plan-slot IDs without replacing saved state', () => {
     const saved = createEmptyAppState()
     saved.meals.push({ id: 'saved-meal', name: 'Saved', active: true })
