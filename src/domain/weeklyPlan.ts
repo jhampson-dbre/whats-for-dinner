@@ -34,7 +34,7 @@ export function buildWeeklyPlan(state: PlannerState, startDate: string, optional
   const unfamiliar = eligible.filter((meal) => meal.provisional && !state.outcomes.some((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'accepted'))
   const optionalMeal = unfamiliar.sort((a, b) => a.id.localeCompare(b.id))[0]
   const familiar = eligible.filter((meal) => !unfamiliar.includes(meal))
-  const fallback = optionalMeal ? familiar.sort((a, b) => a.id.localeCompare(b.id))[0] : undefined
+  const fallback = optionalMeal ? familiar.filter((meal) => state.outcomes.some((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'accepted')).sort((a, b) => a.id.localeCompare(b.id))[0] : undefined
   const optionalSelection = optionalMeal && fallback && (optionalAction === 'use' || optionalAction === 'adapt' && optionalMeal.adaptations?.length)
   const candidates = [...familiar, ...(optionalSelection ? [optionalMeal] : [])]
   const slots: PlanSlot[] = []
@@ -44,10 +44,12 @@ export function buildWeeklyPlan(state: PlannerState, startDate: string, optional
     const constrained = state.household.scheduleExceptions.some((exception) => exception.date === date && exception.constrained)
     const ranked = candidates.filter((meal) => meal !== optionalMeal || cookingDay === 0).map((meal) => {
       const recipe = state.recipes.filter((item) => item.mealId === meal.id).sort((a, b) => a.id.localeCompare(b.id))[0]
+      const timingKnown = recipe?.prepMinutes !== undefined && recipe?.cookMinutes !== undefined
       const minutes = (recipe?.prepMinutes ?? 0) + (recipe?.cookMinutes ?? 0)
-      const fits = !constrained || minutes <= 30
+      const fits = !constrained || timingKnown && minutes <= 30
       if (!fits) {
-        if (!excluded.some((item) => item.mealId === meal.id && item.reason === `Does not fit constrained night on ${date}.`)) excluded.push({ mealId: meal.id, reason: `Does not fit constrained night on ${date}.` })
+        const reason = timingKnown ? `Does not fit constrained night on ${date}.` : `Timing is unknown on constrained night ${date}.`
+        if (!excluded.some((item) => item.mealId === meal.id && item.reason === reason)) excluded.push({ mealId: meal.id, reason })
         return undefined
       }
       const prior = slots.filter((slot) => slot.mealId === meal.id && slot.leftoverFrom === undefined).length
@@ -58,10 +60,11 @@ export function buildWeeklyPlan(state: PlannerState, startDate: string, optional
       const confidenceScore = band === 'Established' ? PLAN_WEIGHTS.confidence : band === 'Learning' ? PLAN_WEIGHTS.confidence / 2 : 0
       const plannedLeftovers = meal.plannedLeftoverDinner && cookingDay < 6
       const leftoverScore = plannedLeftovers ? PLAN_WEIGHTS.leftoverFit : 0
-      const score = historyScore + (fits ? PLAN_WEIGHTS.effortTimeFit + PLAN_WEIGHTS.scheduleContext : 0) + (meal.adaptations?.length ? PLAN_WEIGHTS.sharedAdaptation : 0) + (prior ? 0 : PLAN_WEIGHTS.variety) + leftoverScore + confidenceScore
+      const score = historyScore + (timingKnown ? PLAN_WEIGHTS.effortTimeFit : 0) + PLAN_WEIGHTS.scheduleContext + (meal.adaptations?.length ? PLAN_WEIGHTS.sharedAdaptation : 0) + (prior ? 0 : PLAN_WEIGHTS.variety) + leftoverScore + confidenceScore
       const reasons = [
         `${accepted || rejected ? `Household outcomes contribute ${historyScore}/${PLAN_WEIGHTS.acceptanceHistory}.` : `No household outcome yet (${historyScore}/${PLAN_WEIGHTS.acceptanceHistory} starting point).`}`,
-        constrained ? (fits ? 'Fits this constrained night (18 effort/time + 12 schedule).' : 'Does not fit this constrained night.') : 'Fits the household schedule.',
+        constrained ? 'Fits this constrained night (18 effort/time + 12 schedule).' : 'Fits the household schedule.',
+        ...(timingKnown ? [] : ['Timing is unknown, so effort/time fit has no points.']),
         meal.adaptations?.length ? 'A saved shared-meal adaptation is available (12 adaptation).' : 'No saved shared-meal adaptation is needed.',
         prior ? 'Used again after other options.' : 'Keeps this week varied (12 variety).',
         ...(plannedLeftovers ? ['Planned leftovers cover the following night (8 leftover fit).'] : []),

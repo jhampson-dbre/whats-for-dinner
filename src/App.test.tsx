@@ -226,6 +226,20 @@ describe('weekly planning', () => {
     expect(screen.getByText(/2026-08-17: Soup/)).toBeInTheDocument()
   })
 
+  it('clears a weekly preview when a committed household change invalidates it', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-a', name: 'Soup', active: true, safetyReview: 'approved' })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    fireEvent.change(screen.getByLabelText('Hard restriction'), { target: { value: 'Peanuts' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add restriction' }))
+
+    expect(screen.queryByRole('heading', { name: 'Weekly plan preview' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Confirm weekly plan' })).not.toBeInTheDocument()
+  })
+
   it('does not preview a plan without a week-start date', () => {
     render(<App />)
     fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '' } })
@@ -240,6 +254,7 @@ describe('weekly planning', () => {
       { id: 'fallback', name: 'Fallback', active: true, safetyReview: 'approved' },
       { id: 'new', name: 'New', active: true, provisional: true, safetyReview: 'approved' },
     )
+    state.outcomes.push({ id: 'fallback-outcome', mealId: 'fallback', acceptance: 'accepted' })
     state.recipes.push({ id: 'new-recipe', title: 'New', mealId: 'new', prepMinutes: 20, cookMinutes: 30 })
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
@@ -257,6 +272,7 @@ describe('weekly planning', () => {
       { id: 'fallback', name: 'Fallback', active: true, safetyReview: 'approved' },
       { id: 'new', name: 'New', active: true, provisional: true, safetyReview: 'approved' },
     )
+    state.outcomes.push({ id: 'fallback-outcome', mealId: 'fallback', acceptance: 'accepted' })
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
     render(<App />)

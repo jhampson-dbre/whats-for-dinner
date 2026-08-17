@@ -84,6 +84,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
 
   const commit = (next: AppStateV1) => {
     setSaveStatus(saveAppState(localStorage, next).saved ? 'saved' : 'unsaved')
+    setWeeklyPreview(undefined)
     dispatch({ type: 'replace', state: next })
   }
 

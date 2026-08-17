@@ -87,7 +87,7 @@ describe('weekly plan', () => {
     const plan = buildWeeklyPlan({ ...base, meals: [
       { id: 'fallback', name: 'Fallback', active: true, safetyReview: 'approved' },
       { id: 'optional', name: 'Optional', active: true, provisional: true, safetyReview: 'approved', adaptations: [{}] },
-    ] }, '2026-08-17', 'use')
+    ], outcomes: [{ id: 'fallback-outcome', mealId: 'fallback', acceptance: 'accepted' }] }, '2026-08-17', 'use')
 
     expect(plan.slots[0].mealId).toBe('optional')
     expect(plan.slots.slice(1).every((slot) => slot.mealId !== 'optional')).toBe(true)
@@ -98,7 +98,7 @@ describe('weekly plan', () => {
       { id: 'fallback', name: 'Fallback', active: true, safetyReview: 'approved' },
       { id: 'new-a', name: 'New A', active: true, safetyReview: 'approved', provisional: true },
       { id: 'new-b', name: 'New B', active: true, safetyReview: 'approved', provisional: true },
-    ] }, '2026-08-17')
+    ], outcomes: [{ id: 'fallback-outcome', mealId: 'fallback', acceptance: 'accepted' }] }, '2026-08-17')
     const noFallback = buildWeeklyPlan({ ...base, meals: [
       { id: 'new-a', name: 'New A', active: true, safetyReview: 'approved', provisional: true },
       { id: 'new-b', name: 'New B', active: true, safetyReview: 'approved', provisional: true },
@@ -108,6 +108,27 @@ describe('weekly plan', () => {
     expect(plan.slots.every((slot) => slot.mealId === 'fallback')).toBe(true)
     expect(noFallback).toMatchObject({ slots: [] })
     expect(noFallback.optional).toBeUndefined()
+  })
+
+  it('requires an accepted outcome before offering a familiar meal as a provisional fallback', () => {
+    const plan = buildWeeklyPlan({ ...base, meals: [
+      { id: 'familiar', name: 'Familiar', active: true, safetyReview: 'approved' },
+      { id: 'new', name: 'New', active: true, provisional: true, safetyReview: 'approved' },
+    ] }, '2026-08-17')
+
+    expect(plan.slots).toHaveLength(7)
+    expect(plan.optional).toBeUndefined()
+  })
+
+  it('treats missing timing as unknown capacity on constrained nights and no effort fit on ordinary nights', () => {
+    const constrained = buildWeeklyPlan({ ...base, household: { ...base.household, scheduleExceptions: [{ id: 'late', date: '2026-08-17', constrained: true }] }, meals: [{ id: 'meal', name: 'Meal', active: true, safetyReview: 'approved' }] }, '2026-08-17')
+    const incomplete = buildWeeklyPlan({ ...base, household: { ...base.household, scheduleExceptions: [{ id: 'late', date: '2026-08-17', constrained: true }] }, meals: [{ id: 'meal', name: 'Meal', active: true, safetyReview: 'approved' }], recipes: [{ id: 'recipe', mealId: 'meal', prepMinutes: 10 }] }, '2026-08-17')
+    const ordinary = buildWeeklyPlan({ ...base, meals: [{ id: 'meal', name: 'Meal', active: true, safetyReview: 'approved' }] }, '2026-08-17')
+
+    expect(constrained).toMatchObject({ slots: [], excluded: [expect.objectContaining({ reason: 'Timing is unknown on constrained night 2026-08-17.' })] })
+    expect(incomplete).toMatchObject({ slots: [], excluded: [expect.objectContaining({ reason: 'Timing is unknown on constrained night 2026-08-17.' })] })
+    expect(ordinary.slots[0]).toMatchObject({ score: 40 })
+    expect(ordinary.slots[0].reasons).toContain('Timing is unknown, so effort/time fit has no points.')
   })
 
   it('uses planned leftovers only for meals explicitly flagged for one dinner', () => {
