@@ -414,6 +414,24 @@ describe('shopping and repair', () => {
     fireEvent.change(screen.getByLabelText('Meal name Tacos'), { target: { value: 'Tacos tonight' } })
     expect(screen.queryByRole('button', { name: 'Confirm repair' })).not.toBeInTheDocument()
   })
+
+  it('consumes a one-dinner leftover lot only when its repair is confirmed', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'tacos-slot', date: '2026-08-17', mealId: 'tacos' }] } as never)
+    state.leftoverLots.push({ id: 'lot', sourcePlanId: 'plan', sourceSlotId: 'tacos-slot', sourceMealId: 'tacos', dinnerCoverage: 'one', active: true })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use confirmed leftovers' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').leftoverLots[0]).toMatchObject({ active: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').leftoverLots[0]).toMatchObject({ active: false })
+    fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
+    expect(screen.queryByRole('button', { name: 'Use confirmed leftovers' })).not.toBeInTheDocument()
+  })
 })
 
 describe('Recipe Keeper import', () => {
@@ -575,5 +593,24 @@ describe('cooking outcomes', () => {
     fireEvent.change(screen.getByLabelText('Leftover coverage'), { target: { value: 'none' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').leftoverLots).toEqual([expect.objectContaining({ dinnerCoverage: 'one', active: false })])
+  })
+
+  it('keeps feedback actions available for older confirmed plans', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true })
+    state.plans.push(
+      { id: 'old', confirmed: true, slots: [{ id: 'old-slot', date: '2026-08-15', mealId: 'tacos', cookingStartedAt: '2020-01-01T17:00:00.000Z', dinnerReadyAt: '2020-01-01T17:20:00.000Z', feedbackEligibleAt: '2020-01-01T18:00:00.000Z', feedbackDismissed: true }] },
+      { id: 'middle', confirmed: true, slots: [{ id: 'middle-slot', date: '2026-08-16', mealId: 'tacos', cookingStartedAt: '2020-01-01T17:00:00.000Z', dinnerReadyAt: '2020-01-01T17:20:00.000Z', feedbackEligibleAt: '2020-01-01T18:00:00.000Z' }] },
+      { id: 'new', confirmed: true, slots: [{ id: 'new-slot', date: '2026-08-17', mealId: 'tacos' }] },
+    )
+    state.outcomes.push({ id: 'middle-outcome', planId: 'middle', planSlotId: 'middle-slot', mealId: 'tacos', acceptance: 'accepted' })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
+    expect(screen.getByRole('heading', { name: 'Dinner feedback' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Not now' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Correct feedback' }))
+    expect(screen.getByRole('heading', { name: 'Dinner feedback' })).toBeInTheDocument()
   })
 })

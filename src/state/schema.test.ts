@@ -109,4 +109,20 @@ describe('V1 state validation', () => {
     state.outcomes.push({ id: 'old', planId: 'plan-1', planSlotId: 'slot-1', mealId: 'meal-1' }, { id: 'fork-a', planId: 'plan-1', planSlotId: 'slot-1', mealId: 'meal-1', correctionOfOutcomeId: 'old' }, { id: 'fork-b', planId: 'plan-1', planSlotId: 'slot-1', mealId: 'meal-1', correctionOfOutcomeId: 'old' })
     expect(() => importAppState(JSON.stringify(state))).toThrow()
   })
+
+  it('rejects outcome and leftover references that disagree with their source slot', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Soup', active: true }, { id: 'meal-2', name: 'Tacos', active: true })
+    state.recipes.push({ id: 'recipe-1', title: 'Soup', mealId: 'meal-1' }, { id: 'recipe-2', title: 'Tacos', mealId: 'meal-2' })
+    state.plans.push({ id: 'plan-1', slots: [{ id: 'slot-1', date: '2026-08-17', mealId: 'meal-1', recipeId: 'recipe-1' }] }, { id: 'plan-2', slots: [{ id: 'slot-2', date: '2026-08-18', mealId: 'meal-2', recipeId: 'recipe-2' }] })
+    state.outcomes.push({ id: 'outcome-1', planId: 'plan-1', planSlotId: 'slot-2', mealId: 'meal-2', recipeId: 'recipe-2' })
+    expect(() => importAppState(JSON.stringify(state))).toThrow()
+    state.outcomes[0] = { id: 'outcome-1', planId: 'plan-1', planSlotId: 'slot-1', mealId: 'meal-2', recipeId: 'recipe-2' }
+    expect(() => importAppState(JSON.stringify(state))).toThrow()
+    state.outcomes.length = 0
+    state.leftoverLots.push({ id: 'lot-1', sourcePlanId: 'plan-1', sourceSlotId: 'slot-2', sourceMealId: 'meal-2' })
+    expect(() => importAppState(JSON.stringify(state))).toThrow()
+    state.leftoverLots[0] = { id: 'lot-1', sourcePlanId: 'plan-1', sourceSlotId: 'slot-1', sourceMealId: 'meal-2' }
+    expect(() => importAppState(JSON.stringify(state))).toThrow()
+  })
 })

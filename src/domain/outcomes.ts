@@ -32,7 +32,7 @@ export function householdAcceptance(personAcceptances: Acceptance[]): Acceptance
 }
 
 export function classifyRecovery(input: Pick<RawOutcome, 'acceptance' | 'repairKind' | 'takeoutContext'>): 'none' | 'successful' | 'unsuccessful' {
-  if (input.repairKind === 'recovery') return input.acceptance === 'accepted' ? 'successful' : 'unsuccessful'
+  if (input.repairKind && input.repairKind !== 'takeout') return input.acceptance === 'accepted' ? 'successful' : 'unsuccessful'
   if (input.repairKind === 'takeout') return input.takeoutContext === 'predictable-planning-or-acceptance-failure' || input.acceptance !== 'accepted' ? 'unsuccessful' : 'successful'
   return 'none'
 }

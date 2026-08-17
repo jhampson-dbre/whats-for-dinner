@@ -84,6 +84,7 @@ export const appStateV1Schema = z.object({
   const leftovers = new Set(state.leftoverLots.map(({ id: value }) => value))
   const adaptations = new Set(state.meals.flatMap((meal) => meal.adaptations?.map(({ id: value }) => value) ?? []))
   const slots = new Set(state.plans.flatMap(({ slots: values }) => values.map(({ id: value }) => value)))
+  const slotRecords = state.plans.flatMap((plan) => plan.slots.map((slot) => ({ plan, slot })))
   const requireReference = (exists: boolean, path: (string | number)[], label: string) => { if (!exists) referenceIssue(ctx, path, label) }
 
   state.household.hardRestrictions.forEach((value, index) => { if (value.dinerId) requireReference(diners.has(value.dinerId), ['household', 'hardRestrictions', index, 'dinerId'], 'diner') })
@@ -121,12 +122,19 @@ export const appStateV1Schema = z.object({
     if (value.sourcePlanId) requireReference(plans.has(value.sourcePlanId), ['leftoverLots', index, 'sourcePlanId'], 'plan')
     if (value.sourceSlotId) requireReference(slots.has(value.sourceSlotId), ['leftoverLots', index, 'sourceSlotId'], 'plan slot')
     if (value.sourceMealId) requireReference(meals.has(value.sourceMealId), ['leftoverLots', index, 'sourceMealId'], 'meal')
+    const source = slotRecords.find(({ slot }) => slot.id === value.sourceSlotId)
+    if (value.sourcePlanId && source && source.plan.id !== value.sourcePlanId) ctx.addIssue({ code: 'custom', path: ['leftoverLots', index, 'sourceSlotId'], message: 'Source slot must belong to source plan.' })
+    if (value.sourceMealId && source && source.slot.mealId !== value.sourceMealId) ctx.addIssue({ code: 'custom', path: ['leftoverLots', index, 'sourceMealId'], message: 'Source meal must match source slot.' })
   })
   state.outcomes.forEach((value, index) => {
     if (value.planId) requireReference(plans.has(value.planId), ['outcomes', index, 'planId'], 'plan')
     if (value.planSlotId) requireReference(slots.has(value.planSlotId), ['outcomes', index, 'planSlotId'], 'plan slot')
     if (value.mealId) requireReference(meals.has(value.mealId), ['outcomes', index, 'mealId'], 'meal')
     if (value.recipeId) requireReference(recipes.has(value.recipeId), ['outcomes', index, 'recipeId'], 'recipe')
+    const source = slotRecords.find(({ slot }) => slot.id === value.planSlotId)
+    if (value.planId && source && source.plan.id !== value.planId) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'planSlotId'], message: 'Plan slot must belong to plan.' })
+    if (value.mealId && source && source.slot.mealId !== value.mealId) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'mealId'], message: 'Outcome meal must match plan slot.' })
+    if (value.recipeId && source && source.slot.recipeId !== value.recipeId) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'recipeId'], message: 'Outcome recipe must match plan slot.' })
     if (value.correctionOfOutcomeId) {
       const prior = state.outcomes.slice(0, index).find((outcome) => outcome.id === value.correctionOfOutcomeId)
       requireReference(Boolean(prior), ['outcomes', index, 'correctionOfOutcomeId'], 'earlier outcome')

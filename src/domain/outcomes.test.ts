@@ -17,6 +17,9 @@ describe('outcomes', () => {
 
   it('classifies takeout using its repair context', () => {
     expect(classifyRecovery({ acceptance: 'accepted' })).toBe('none')
+    expect(classifyRecovery({ repairKind: 'simpler', acceptance: 'accepted' })).toBe('successful')
+    expect(classifyRecovery({ repairKind: 'swap', acceptance: 'rejected' })).toBe('unsuccessful')
+    expect(classifyRecovery({ repairKind: 'leftovers', acceptance: 'accepted' })).toBe('successful')
     expect(classifyRecovery({ repairKind: 'recovery', acceptance: 'accepted' })).toBe('successful')
     expect(classifyRecovery({ repairKind: 'recovery', acceptance: 'rejected' })).toBe('unsuccessful')
     expect(classifyRecovery({ repairKind: 'takeout', takeoutContext: 'planned', acceptance: 'accepted' })).toBe('successful')
