@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { strToU8, zipSync } from 'fflate'
+import recipeFixture from './import/recipeKeeper.fixture.html?raw'
 import App from './App'
 import { APP_STATE_STORAGE_KEY, createEmptyAppState } from './state/storage'
 
@@ -183,5 +185,39 @@ describe('household onboarding and meal library', () => {
       household: { hardRestrictions: [{ id: 'restriction-imported', label: 'Dairy' }] },
       meals: [{ name: 'Pasta', safetyReview: 'unknown' }],
     })
+  })
+})
+
+describe('Recipe Keeper import', () => {
+  afterEach(() => { localStorage.clear(); vi.restoreAllMocks() })
+
+  it('keeps state unchanged until confirmation, then saves a new meal with unknown safety', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, backup('old-meal'))
+    render(<App />)
+    const input = screen.getByLabelText('Recipe Keeper ZIP')
+    const bytes = zipSync({ 'recipes.html': strToU8(recipeFixture), 'images/ignored.jpg': strToU8('image') })
+    fireEvent.change(input, { target: { files: [{ arrayBuffer: () => Promise.resolve(bytes.buffer) }] } })
+
+    await screen.findByText('Preview: Weeknight Soup — Dinner / Soup (2 ingredients)')
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({ meals: [{ id: 'old-meal' }], recipes: [] })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }))
+
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({
+      meals: expect.arrayContaining([expect.objectContaining({ name: 'Weeknight Soup', safetyReview: 'unknown' })]),
+      recipes: expect.arrayContaining([expect.objectContaining({ title: 'Weeknight Soup', externalId: 'rk-1', source: { provider: 'Recipe Keeper', reference: 'Family notes' } })]),
+    }))
+  })
+
+  it('does not turn an overlong imported title into an invalid new meal', async () => {
+    const { container } = render(<App />)
+    const bytes = zipSync({ 'recipes.html': strToU8(recipeFixture.replace('Weeknight Soup', 'x'.repeat(161))) })
+    fireEvent.change(screen.getByLabelText('Recipe Keeper ZIP'), { target: { files: [{ arrayBuffer: () => Promise.resolve(bytes.buffer) }] } })
+
+    await screen.findByText(/Preview: x{161}/)
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }))
+
+    expect(screen.getByRole('status')).toHaveTextContent('Save recipe only or choose an existing meal; this title is too long for a new meal.')
+    expect(container.querySelectorAll('.meal-list li')).toHaveLength(0)
   })
 })

@@ -4,6 +4,11 @@ const id = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
 const nonBlank = (max: number) => z.string().min(1).max(max).refine((value) => value.trim().length > 0)
 const text = nonBlank(500)
 const shortText = nonBlank(160)
+const importedText = nonBlank(1024)
+const importedItem = nonBlank(2048)
+const importedList = z.array(importedItem).max(500).superRefine((items, context) => {
+  if (items.reduce((total, item) => total + item.length, 0) > 128 * 1024) context.addIssue({ code: 'custom', message: 'Imported text is too large.' })
+})
 const date = z.iso.date()
 const timestamp = z.string().datetime({ offset: true }).refine((value) => value.endsWith('Z'))
 const minutes = z.number().int().min(0).max(10_080)
@@ -19,9 +24,9 @@ const mealSchema = z.object({
   recipeIds: z.array(id).max(50).optional(), adaptations: z.array(adaptationSchema).max(50).optional(), recoveryMealIds: z.array(id).max(50).optional(),
 }).strict()
 const recipeSchema = z.object({
-  id, title: shortText, mealId: id.optional(), source: z.object({ provider: shortText, reference: text.optional() }).strict().optional(),
-  category: shortText.optional(), prepMinutes: minutes.optional(), cookMinutes: minutes.optional(), yield: shortText.optional(),
-  servings: z.number().int().positive().max(100).optional(), ingredients: z.array(text).max(200).optional(), instructions: z.array(text).max(200).optional(), preparationNotes: text.optional(),
+  id, title: importedText, externalId: importedText.optional(), mealId: id.optional(), source: z.object({ provider: importedText, reference: importedText.optional() }).strict().optional(),
+  category: importedText.optional(), prepMinutes: minutes.optional(), cookMinutes: minutes.optional(), yield: importedText.optional(),
+  servings: z.number().int().positive().max(100).optional(), ingredients: importedList.optional(), instructions: importedList.optional(), preparationNotes: text.optional(),
 }).strict()
 const planSlotSchema = z.object({
   id, date, mealId: id.optional(), recipeId: id.optional(), leftoverLotIds: z.array(id).max(50).optional(), leftoverDependencyIds: z.array(id).max(50).optional(),
