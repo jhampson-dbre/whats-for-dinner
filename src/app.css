@@ -1,0 +1,3 @@
+.shell { max-width: 42rem; margin: 4rem auto; padding: 0 1rem; }
+.actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
+.actions label { display: grid; gap: .25rem; }

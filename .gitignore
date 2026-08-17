@@ -1,1 +1,4 @@
 .trekker/
+node_modules/
+dist/
+*.tsbuildinfo
