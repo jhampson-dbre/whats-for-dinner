@@ -58,7 +58,10 @@ describe('backup import', () => {
 })
 
 describe('household onboarding and meal library', () => {
-  afterEach(() => localStorage.clear())
+  afterEach(() => {
+    localStorage.clear()
+    vi.restoreAllMocks()
+  })
 
   it('onboards a diner, a diner restriction, and a schedule exception', () => {
     render(<App />)
@@ -128,6 +131,16 @@ describe('household onboarding and meal library', () => {
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({ meals: [{ name: 'Soup' }] })
   })
 
+  it('does not save an overlong inline meal name', () => {
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Meal name'), { target: { value: 'Soup' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add meal' }))
+    fireEvent.change(screen.getByLabelText('Meal name Soup'), { target: { value: 'x'.repeat(161) } })
+
+    expect(screen.getByText('Changes saved locally.')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({ meals: [{ name: 'Soup' }] })
+  })
+
   it('restores committed onboarding and name-only meals after reload', () => {
     const view = render(<App />)
     fireEvent.change(screen.getByLabelText('Diner name'), { target: { value: 'Ava' } })
@@ -150,5 +163,25 @@ describe('household onboarding and meal library', () => {
     render(<App />)
     expect(screen.getByText('Recipe: Weeknight soup')).toBeInTheDocument()
     expect(screen.getByText('1 linked recipe. Grocery ingredients are incomplete.')).toBeInTheDocument()
+  })
+
+  it('resets imported meal approvals when imported restrictions differ', async () => {
+    const current = createEmptyAppState()
+    current.household.hardRestrictions.push({ id: 'restriction-current', label: 'Peanuts' })
+    current.meals.push({ id: 'meal-current', name: 'Tacos', active: true, safetyReview: 'approved' })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(current))
+    const imported = createEmptyAppState()
+    imported.household.hardRestrictions.push({ id: 'restriction-imported', label: 'Dairy' })
+    imported.meals.push({ id: 'meal-imported', name: 'Pasta', active: true, safetyReview: 'approved' })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    const { container } = render(<App />)
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [{ text: () => Promise.resolve(JSON.stringify(imported)) }] } })
+
+    await waitFor(() => expect(screen.getByText('Confirm compatibility before planning.')).toBeInTheDocument())
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({
+      household: { hardRestrictions: [{ id: 'restriction-imported', label: 'Dairy' }] },
+      meals: [{ name: 'Pasta', safetyReview: 'unknown' }],
+    })
   })
 })

@@ -17,6 +17,10 @@ function reducer(_state: AppStateV1, action: Action): AppStateV1 {
   return action.state
 }
 
+function sameRestrictions(a: AppStateV1['household']['hardRestrictions'], b: AppStateV1['household']['hardRestrictions']): boolean {
+  return a.length === b.length && a.every((restriction, index) => restriction.id === b[index].id && restriction.label === b[index].label && restriction.dinerId === b[index].dinerId)
+}
+
 function download(filename: string, contents: string): void {
   const link = document.createElement('a')
   link.href = URL.createObjectURL(new Blob([contents], { type: 'application/json' }))
@@ -77,27 +81,28 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
   const update = (change: (current: AppStateV1) => AppStateV1) => commit(change(state))
   const addDiner = () => {
     const name = dinerName.trim()
-    if (!name) return
+    if (!name || name.length > 160 || state.household.diners.length >= 20) return
     update((current) => ({ ...current, household: { ...current.household, diners: [...current.household.diners, { id: crypto.randomUUID(), name, active: true }] } }))
     setDinerName('')
   }
   const addRestriction = () => {
     const label = restriction.trim()
-    if (!label) return
+    if (!label || label.length > 160 || state.household.hardRestrictions.length >= 50) return
     update((current) => ({ ...current, household: { ...current.household, hardRestrictions: [...current.household.hardRestrictions, { id: crypto.randomUUID(), label, ...(restrictionDinerId && { dinerId: restrictionDinerId }) }] }, meals: current.meals.map((meal) => ({ ...meal, safetyReview: 'unknown' })) }))
     setRestriction('')
     setRestrictionDinerId('')
   }
   const addException = () => {
-    if (!exceptionDate) return
+    if (!exceptionDate || state.household.scheduleExceptions.length >= 100) return
     const note = exceptionNote.trim()
+    if (note.length > 500) return
     update((current) => ({ ...current, household: { ...current.household, scheduleExceptions: [...current.household.scheduleExceptions, { id: crypto.randomUUID(), date: exceptionDate, ...(note && { note }) }] } }))
     setExceptionDate('')
     setExceptionNote('')
   }
   const addMeal = () => {
     const name = mealName.trim()
-    if (!name) return
+    if (!name || name.length > 160 || state.meals.length >= 500) return
     update((current) => ({ ...current, meals: [...current.meals, { id: crypto.randomUUID(), name, active: true, safetyReview: 'unknown' }] }))
     setMealName('')
   }
@@ -110,7 +115,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
         try {
           const imported = importAppState(raw)
           if (!window.confirm('Replace all current app data with this backup?')) return
-          commit(imported)
+          commit(sameRestrictions(state.household.hardRestrictions, imported.household.hardRestrictions) ? imported : { ...imported, meals: imported.meals.map((meal) => ({ ...meal, safetyReview: 'unknown' })) })
           setMessage('Backup imported.')
         } catch {
           setMessage('That file is not a valid V1 backup.')
@@ -133,20 +138,20 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
       <section aria-labelledby="household-heading">
         <h2 id="household-heading">Household</h2>
         <form className="actions" onSubmit={(event) => { event.preventDefault(); addDiner() }}>
-          <label>Diner name<input value={dinerName} onChange={(event) => setDinerName(event.target.value)} /></label>
-          <button>Add diner</button>
+          <label>Diner name<input maxLength={160} value={dinerName} onChange={(event) => setDinerName(event.target.value)} /></label>
+          <button disabled={state.household.diners.length >= 20}>Add diner</button>
         </form>
         {state.household.diners.length > 0 && <ul>{state.household.diners.map((diner) => <li key={diner.id}>{diner.name}</li>)}</ul>}
         <form className="actions" onSubmit={(event) => { event.preventDefault(); addRestriction() }}>
-          <label>Hard restriction<input value={restriction} onChange={(event) => setRestriction(event.target.value)} /></label>
+          <label>Hard restriction<input maxLength={160} value={restriction} onChange={(event) => setRestriction(event.target.value)} /></label>
           <label>Applies to<select value={restrictionDinerId} onChange={(event) => setRestrictionDinerId(event.target.value)}><option value="">Everyone</option>{state.household.diners.map((diner) => <option key={diner.id} value={diner.id}>{diner.name}</option>)}</select></label>
-          <button>Add restriction</button>
+          <button disabled={state.household.hardRestrictions.length >= 50}>Add restriction</button>
         </form>
         {state.household.hardRestrictions.length > 0 && <ul>{state.household.hardRestrictions.map((item) => <li key={item.id}>{item.label}{item.dinerId && ` — ${state.household.diners.find((diner) => diner.id === item.dinerId)?.name}`}</li>)}</ul>}
         <form className="actions" onSubmit={(event) => { event.preventDefault(); addException() }}>
           <label>Exception date<input type="date" value={exceptionDate} onChange={(event) => setExceptionDate(event.target.value)} /></label>
-          <label>Exception note<input value={exceptionNote} onChange={(event) => setExceptionNote(event.target.value)} /></label>
-          <button>Add exception</button>
+          <label>Exception note<input maxLength={500} value={exceptionNote} onChange={(event) => setExceptionNote(event.target.value)} /></label>
+          <button disabled={state.household.scheduleExceptions.length >= 100}>Add exception</button>
         </form>
         {state.household.scheduleExceptions.length > 0 && <ul>{state.household.scheduleExceptions.map((item) => <li key={item.id}>{item.date}{item.note && `: ${item.note}`}</li>)}</ul>}
       </section>
@@ -154,15 +159,15 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
         <h2 id="meals-heading">Meal library</h2>
         <p>{state.meals.filter((meal) => meal.active).length} selected. For a useful first plan, select 8–12 active meals.</p>
         <form className="actions" onSubmit={(event) => { event.preventDefault(); addMeal() }}>
-          <label>Meal name<input value={mealName} onChange={(event) => setMealName(event.target.value)} /></label>
-          <button>Add meal</button>
+          <label>Meal name<input maxLength={160} value={mealName} onChange={(event) => setMealName(event.target.value)} /></label>
+          <button disabled={state.meals.length >= 500}>Add meal</button>
         </form>
         <ul className="meal-list">
           {state.meals.map((meal) => {
             const recipes = state.recipes.filter((recipe) => recipe.mealId === meal.id || meal.recipeIds?.includes(recipe.id))
             const eligibility = mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview })
             return <li key={meal.id}>
-              <label>Meal name {meal.name}<input value={meal.name} onChange={(event) => { if (event.target.value.trim()) update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, name: event.target.value } : currentMeal) })) }} /></label>
+              <label>Meal name {meal.name}<input maxLength={160} value={meal.name} onChange={(event) => { if (event.target.value.trim() && event.target.value.length <= 160) update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, name: event.target.value } : currentMeal) })) }} /></label>
               <label><input aria-label={`Active ${meal.name}`} type="checkbox" checked={meal.active} onChange={(event) => update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, active: event.target.checked } : currentMeal) }))} /> Active</label>
               <label>Safety review for {meal.name}<select value={meal.safetyReview ?? 'unknown'} onChange={(event) => update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, safetyReview: event.target.value as 'unknown' | 'approved' | 'rejected' } : currentMeal) }))}><option value="unknown">Unknown</option><option value="approved">Compatibility confirmed</option><option value="rejected">Not compatible</option></select></label>
               {recipes.map((recipe) => <p key={recipe.id}>Recipe: {recipe.title}</p>)}
