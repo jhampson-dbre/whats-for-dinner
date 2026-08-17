@@ -1,8 +1,9 @@
 import { z } from 'zod'
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
-const text = z.string().trim().min(1).max(500)
-const shortText = z.string().trim().min(1).max(160)
+const nonBlank = (max: number) => z.string().min(1).max(max).refine((value) => value.trim().length > 0)
+const text = nonBlank(500)
+const shortText = nonBlank(160)
 const date = z.iso.date()
 const timestamp = z.string().datetime({ offset: true }).refine((value) => value.endsWith('Z'))
 const minutes = z.number().int().min(0).max(10_080)
@@ -42,11 +43,31 @@ function referenceIssue(ctx: z.RefinementCtx, path: (string | number)[], label: 
   ctx.addIssue({ code: 'custom', path, message: `Unknown ${label} reference.` })
 }
 
+function duplicateIds(ctx: z.RefinementCtx, values: { id: string; path: (string | number)[] }[]): void {
+  const seen = new Set<string>()
+  values.forEach((value) => {
+    if (seen.has(value.id)) ctx.addIssue({ code: 'custom', path: value.path, message: 'Duplicate ID.' })
+    seen.add(value.id)
+  })
+}
+
 export const appStateV1Schema = z.object({
   schemaVersion: z.literal(1),
   household: z.object({ diners: z.array(dinerSchema).max(20), hardRestrictions: z.array(restrictionSchema).max(50), scheduleExceptions: z.array(scheduleExceptionSchema).max(100) }).strict(),
   meals: z.array(mealSchema).max(500), recipes: z.array(recipeSchema).max(1_000), plans: z.array(planSchema).max(100), leftoverLots: z.array(leftoverLotSchema).max(500), outcomes: z.array(outcomeSchema).max(2_000),
 }).strict().superRefine((state, ctx) => {
+  duplicateIds(ctx, state.household.diners.map((value, index) => ({ id: value.id, path: ['household', 'diners', index] })))
+  duplicateIds(ctx, state.household.hardRestrictions.map((value, index) => ({ id: value.id, path: ['household', 'hardRestrictions', index] })))
+  duplicateIds(ctx, state.household.scheduleExceptions.map((value, index) => ({ id: value.id, path: ['household', 'scheduleExceptions', index] })))
+  duplicateIds(ctx, state.meals.map((value, index) => ({ id: value.id, path: ['meals', index] })))
+  duplicateIds(ctx, state.recipes.map((value, index) => ({ id: value.id, path: ['recipes', index] })))
+  duplicateIds(ctx, state.plans.map((value, index) => ({ id: value.id, path: ['plans', index] })))
+  duplicateIds(ctx, state.leftoverLots.map((value, index) => ({ id: value.id, path: ['leftoverLots', index] })))
+  duplicateIds(ctx, state.outcomes.map((value, index) => ({ id: value.id, path: ['outcomes', index] })))
+  duplicateIds(ctx, state.plans.flatMap((plan, planIndex) => plan.slots.map((value, slotIndex) => ({ id: value.id, path: ['plans', planIndex, 'slots', slotIndex] }))))
+  duplicateIds(ctx, state.meals.flatMap((meal, mealIndex) => meal.adaptations?.map((value, adaptationIndex) => ({ id: value.id, path: ['meals', mealIndex, 'adaptations', adaptationIndex] })) ?? []))
+  duplicateIds(ctx, state.plans.flatMap((plan, planIndex) => plan.variants?.map((value, variantIndex) => ({ id: value.id, path: ['plans', planIndex, 'variants', variantIndex] })) ?? []))
+  duplicateIds(ctx, state.plans.flatMap((plan, planIndex) => plan.repairRevisions?.map((value, revisionIndex) => ({ id: value.id, path: ['plans', planIndex, 'repairRevisions', revisionIndex] })) ?? []))
   const diners = new Set(state.household.diners.map(({ id: value }) => value))
   const meals = new Set(state.meals.map(({ id: value }) => value))
   const recipes = new Set(state.recipes.map(({ id: value }) => value))
