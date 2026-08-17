@@ -56,3 +56,99 @@ describe('backup import', () => {
     })
   })
 })
+
+describe('household onboarding and meal library', () => {
+  afterEach(() => localStorage.clear())
+
+  it('onboards a diner, a diner restriction, and a schedule exception', () => {
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('Diner name'), { target: { value: 'Ava' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add diner' }))
+    fireEvent.change(screen.getByLabelText('Hard restriction'), { target: { value: 'Peanuts' } })
+    fireEvent.change(screen.getByLabelText('Applies to'), { target: { value: screen.getByRole('option', { name: 'Ava' }).getAttribute('value') } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add restriction' }))
+    fireEvent.change(screen.getByLabelText('Exception date'), { target: { value: '2026-08-20' } })
+    fireEvent.change(screen.getByLabelText('Exception note'), { target: { value: 'Late practice' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add exception' }))
+
+    expect(screen.getByText('Peanuts — Ava')).toBeInTheDocument()
+    expect(screen.getByText('2026-08-20: Late practice')).toBeInTheDocument()
+  })
+
+  it('keeps a name-only meal ineligible with a restriction until compatibility is confirmed, and persists the choice', () => {
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Hard restriction'), { target: { value: 'Peanuts' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add restriction' }))
+    fireEvent.change(screen.getByLabelText('Meal name'), { target: { value: 'Tacos' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add meal' }))
+
+    expect(screen.getByText('No linked recipe. Grocery ingredients are incomplete.')).toBeInTheDocument()
+    expect(screen.getByText('Confirm compatibility before planning.')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Safety review for Tacos'), { target: { value: 'approved' } })
+    expect(screen.getByText('Eligible to plan.')).toBeInTheDocument()
+
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({
+      meals: [{ name: 'Tacos', active: true, safetyReview: 'approved' }],
+    })
+  })
+
+  it('requires a new safety review when a hard restriction changes', () => {
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Meal name'), { target: { value: 'Tacos' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add meal' }))
+    fireEvent.change(screen.getByLabelText('Safety review for Tacos'), { target: { value: 'approved' } })
+    fireEvent.change(screen.getByLabelText('Hard restriction'), { target: { value: 'Peanuts' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add restriction' }))
+
+    expect(screen.getByText('Confirm compatibility before planning.')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({
+      meals: [{ name: 'Tacos', safetyReview: 'unknown' }],
+    })
+  })
+
+  it('shows active-meal count guidance and updates active name-only meals', () => {
+    render(<App />)
+    expect(screen.getByText('0 selected. For a useful first plan, select 8–12 active meals.')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Meal name'), { target: { value: 'Soup' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add meal' }))
+    expect(screen.getByText('1 selected. For a useful first plan, select 8–12 active meals.')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Meal name Soup'), { target: { value: 'Tomato soup' } })
+    fireEvent.click(screen.getByLabelText('Active Tomato soup'))
+    expect(screen.getByText('0 selected. For a useful first plan, select 8–12 active meals.')).toBeInTheDocument()
+  })
+
+  it('does not save a blank inline meal name', () => {
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Meal name'), { target: { value: 'Soup' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add meal' }))
+    fireEvent.change(screen.getByLabelText('Meal name Soup'), { target: { value: '' } })
+
+    expect(screen.getByText('Changes saved locally.')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({ meals: [{ name: 'Soup' }] })
+  })
+
+  it('restores committed onboarding and name-only meals after reload', () => {
+    const view = render(<App />)
+    fireEvent.change(screen.getByLabelText('Diner name'), { target: { value: 'Ava' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add diner' }))
+    fireEvent.change(screen.getByLabelText('Meal name'), { target: { value: 'Tacos' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add meal' }))
+    view.unmount()
+
+    render(<App />)
+    expect(screen.getByText('Ava', { selector: 'li' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Meal name Tacos')).toHaveValue('Tacos')
+  })
+
+  it('shows a linked recipe separately and warns when its ingredients are incomplete', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Soup', active: true, recipeIds: ['recipe-1'] })
+    state.recipes.push({ id: 'recipe-1', title: 'Weeknight soup', mealId: 'meal-1' })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    expect(screen.getByText('Recipe: Weeknight soup')).toBeInTheDocument()
+    expect(screen.getByText('1 linked recipe. Grocery ingredients are incomplete.')).toBeInTheDocument()
+  })
+})
