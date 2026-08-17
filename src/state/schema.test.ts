@@ -69,6 +69,14 @@ describe('V1 state validation', () => {
     expect(() => importAppState(JSON.stringify(state))).toThrow()
   })
 
+  it('persists shopping confirmation item availability and repair context', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan-1', confirmed: true, slots: [{ id: 'slot-1', date: '2026-08-17', mealId: 'meal-1' }], shopping: { confirmedAt: '2026-08-16T00:00:00.000Z', items: [{ label: '1 cup tomatoes', sourceLines: ['1 cup tomatoes'], mealIds: ['meal-1'], perishable: true, availability: 'unavailable' }] }, repairRevisions: [{ id: 'repair-1', createdAt: '2026-08-16T00:00:00.000Z', slotId: 'slot-1', kind: 'takeout', reason: 'Power outage', takeoutContext: 'unforeseeable-disruption' }] } as never)
+
+    expect(importAppState(JSON.stringify(state))).toMatchObject({ plans: expect.arrayContaining([expect.objectContaining({ shopping: expect.objectContaining({ items: expect.arrayContaining([expect.objectContaining({ availability: 'unavailable' })]) }), repairRevisions: expect.arrayContaining([expect.objectContaining({ kind: 'takeout' })]) })]) })
+  })
+
   it('restores surrounding whitespace exactly', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'meal-1', name: ' Tacos ', active: true })

@@ -16,7 +16,7 @@ const minutes = z.number().int().min(0).max(10_080)
 const dinerSchema = z.object({ id, name: shortText, active: z.boolean() }).strict()
 const restrictionSchema = z.object({ id, label: shortText, dinerId: id.optional() }).strict()
 const scheduleExceptionSchema = z.object({ id, date, note: text.optional(), constrained: z.boolean().optional() }).strict()
-const adaptationSchema = z.object({ id, name: shortText, mealId: id.optional(), recipeId: id.optional() }).strict()
+const adaptationSchema = z.object({ id, name: shortText, mealId: id.optional(), recipeId: id.optional(), dinerId: id.optional(), issue: text.optional(), solvesIssue: z.literal(true).optional(), coordinatedCooking: z.literal(true).optional(), noSecondEntree: z.literal(true).optional(), noUnplannedProtein: z.literal(true).optional(), noSeparateTimeline: z.literal(true).optional(), noExtraEffort: z.literal(true).optional() }).strict()
 
 const mealSchema = z.object({
   id, name: shortText, active: z.boolean(), provisional: z.boolean().optional(),
@@ -34,9 +34,10 @@ const planSlotSchema = z.object({
   cookingStartedAt: timestamp.optional(), dinnerReadyAt: timestamp.optional(), feedbackEligibleAt: timestamp.optional(), feedbackDismissed: z.boolean().optional(),
 }).strict()
 const planVariantSchema = z.object({ id, label: shortText, mealId: id.optional(), recipeId: id.optional() }).strict()
-const repairRevisionSchema = z.object({ id, createdAt: timestamp, reason: text.optional() }).strict()
+const shoppingSchema = z.object({ confirmedAt: timestamp, items: z.array(z.object({ label: importedText, sourceLines: importedList, mealIds: z.array(id).max(50), perishable: z.boolean(), availability: z.enum(['available', 'unavailable', 'skipped']) }).strict()).max(1_000) }).strict()
+const repairRevisionSchema = z.object({ id, createdAt: timestamp, slotId: id.optional(), kind: z.enum(['simpler', 'swap', 'leftovers', 'recovery', 'takeout']).optional(), leftoverLotId: id.optional(), adaptationId: id.optional(), reason: text.optional(), takeoutContext: z.enum(['planned', 'unforeseeable-disruption', 'predictable-planning-or-acceptance-failure']).optional() }).strict()
 const planSchema = z.object({
-  id, slots: z.array(planSlotSchema).max(31), confirmed: z.boolean().optional(), variants: z.array(planVariantSchema).max(100).optional(), scoreReasons: z.array(text).max(50).optional(), repairRevisions: z.array(repairRevisionSchema).max(100).optional(),
+  id, slots: z.array(planSlotSchema).max(31), confirmed: z.boolean().optional(), variants: z.array(planVariantSchema).max(100).optional(), scoreReasons: z.array(text).max(50).optional(), shopping: shoppingSchema.optional(), repairRevisions: z.array(repairRevisionSchema).max(100).optional(),
 }).strict()
 const leftoverLotSchema = z.object({
   id, sourcePlanId: id.optional(), sourceSlotId: id.optional(), sourceMealId: id.optional(), dinnerCoverage: z.enum(['none', 'some', 'one', 'more-than-one']).optional(),
@@ -79,6 +80,7 @@ export const appStateV1Schema = z.object({
   const recipes = new Set(state.recipes.map(({ id: value }) => value))
   const plans = new Set(state.plans.map(({ id: value }) => value))
   const leftovers = new Set(state.leftoverLots.map(({ id: value }) => value))
+  const adaptations = new Set(state.meals.flatMap((meal) => meal.adaptations?.map(({ id: value }) => value) ?? []))
   const outcomes = new Set(state.outcomes.map(({ id: value }) => value))
   const slots = new Set(state.plans.flatMap(({ slots: values }) => values.map(({ id: value }) => value)))
   const requireReference = (exists: boolean, path: (string | number)[], label: string) => { if (!exists) referenceIssue(ctx, path, label) }
@@ -90,6 +92,7 @@ export const appStateV1Schema = z.object({
     value.adaptations?.forEach((adaptation, adaptationIndex) => {
       if (adaptation.mealId) requireReference(meals.has(adaptation.mealId), ['meals', index, 'adaptations', adaptationIndex, 'mealId'], 'meal')
       if (adaptation.recipeId) requireReference(recipes.has(adaptation.recipeId), ['meals', index, 'adaptations', adaptationIndex, 'recipeId'], 'recipe')
+      if (adaptation.dinerId) requireReference(diners.has(adaptation.dinerId), ['meals', index, 'adaptations', adaptationIndex, 'dinerId'], 'diner')
     })
     value.recoveryMealIds?.forEach((ref, refIndex) => requireReference(meals.has(ref), ['meals', index, 'recoveryMealIds', refIndex], 'meal'))
   })
@@ -103,6 +106,10 @@ export const appStateV1Schema = z.object({
   state.plans.forEach((plan, planIndex) => plan.variants?.forEach((variant, variantIndex) => {
     if (variant.mealId) requireReference(meals.has(variant.mealId), ['plans', planIndex, 'variants', variantIndex, 'mealId'], 'meal')
     if (variant.recipeId) requireReference(recipes.has(variant.recipeId), ['plans', planIndex, 'variants', variantIndex, 'recipeId'], 'recipe')
+  }))
+  state.plans.forEach((plan, planIndex) => plan.repairRevisions?.forEach((revision, revisionIndex) => {
+    if (revision.leftoverLotId) requireReference(leftovers.has(revision.leftoverLotId), ['plans', planIndex, 'repairRevisions', revisionIndex, 'leftoverLotId'], 'leftover lot')
+    if (revision.adaptationId) requireReference(adaptations.has(revision.adaptationId), ['plans', planIndex, 'repairRevisions', revisionIndex, 'adaptationId'], 'adaptation')
   }))
   state.leftoverLots.forEach((value, index) => {
     if (value.sourcePlanId) requireReference(plans.has(value.sourcePlanId), ['leftoverLots', index, 'sourcePlanId'], 'plan')

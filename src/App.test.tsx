@@ -298,6 +298,45 @@ describe('weekly planning', () => {
   })
 })
 
+describe('shopping and repair', () => {
+  afterEach(() => { localStorage.clear(); vi.restoreAllMocks() })
+
+  it('shows incomplete groceries, records an unavailable item, and applies a selected repair only after confirmation', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, recipeIds: ['tacos-recipe'] }, { id: 'soup', name: 'Soup', active: true, recipeIds: ['soup-recipe'] })
+    state.recipes.push({ id: 'tacos-recipe', title: 'Tacos', mealId: 'tacos', ingredients: ['1 cup tomatoes'] }, { id: 'soup-recipe', title: 'Soup', mealId: 'soup' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'tacos-slot', date: '2026-08-17', mealId: 'tacos', recipeId: 'tacos-recipe' }, { id: 'soup-slot', date: '2026-08-18', mealId: 'soup', recipeId: 'soup-recipe' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    expect(screen.getByText('Shopping list is incomplete: Soup.')).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Unavailable 1 cup tomatoes'))
+    fireEvent.click(screen.getByRole('button', { name: 'Shopping done' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].shopping.items).toEqual([{ label: '1 cup tomatoes', sourceLines: ['1 cup tomatoes'], mealIds: ['tacos'], perishable: false, availability: 'unavailable' }])
+    fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Swap with Soup' }))
+    expect(screen.getByText(/Repair preview: Tacos becomes Soup/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[0].mealId).toBe('soup')
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[1].mealId).toBe('tacos')
+  })
+
+  it('clears a repair preview after another persisted change', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true }, { id: 'soup', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'tacos-slot', date: '2026-08-17', mealId: 'tacos' }, { id: 'soup-slot', date: '2026-08-18', mealId: 'soup' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Swap with Soup' }))
+    expect(screen.getByRole('button', { name: 'Confirm repair' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Meal name Tacos'), { target: { value: 'Tacos tonight' } })
+    expect(screen.queryByRole('button', { name: 'Confirm repair' })).not.toBeInTheDocument()
+  })
+})
+
 describe('Recipe Keeper import', () => {
   afterEach(() => { localStorage.clear(); vi.restoreAllMocks() })
 
