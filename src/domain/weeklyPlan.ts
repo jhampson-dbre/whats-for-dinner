@@ -1,10 +1,12 @@
 import { mealEligibility } from './mealEligibility'
+import { mealLearning } from './learning'
+import { correctedOutcomes, observedElapsedMinutes } from './outcomes'
 
 export const PLAN_WEIGHTS = { acceptanceHistory: 32, effortTimeFit: 18, scheduleContext: 12, sharedAdaptation: 12, variety: 12, leftoverFit: 8, confidence: 6 } as const
 
 type Meal = { id: string; name: string; active: boolean; provisional?: boolean; plannedLeftoverDinner?: boolean; safetyReview?: 'unknown' | 'approved' | 'rejected'; adaptations?: unknown[] }
 type Recipe = { id: string; title?: string; mealId?: string; prepMinutes?: number; cookMinutes?: number }
-type Outcome = { id?: string; mealId?: string; acceptance?: 'accepted' | 'rejected' | 'neutral' | 'unknown' }
+type Outcome = { id?: string; mealId?: string; correctionOfOutcomeId?: string; acceptance?: 'accepted' | 'rejected' | 'neutral' | 'unknown'; cookingStartedAt?: string; dinnerReadyAt?: string; activeEffortMinutes?: number }
 type PlannerState = { household: { hardRestrictions: { id: string }[]; scheduleExceptions: { id?: string; date: string; constrained?: boolean }[] }; meals: Meal[]; recipes: Recipe[]; outcomes: Outcome[] }
 
 type PlanSlot = { date: string; mealId: string; recipeId?: string; leftoverFrom?: number; score: number; confidence: 'Estimated' | 'Learning' | 'Established'; reasons: string[] }
@@ -17,24 +19,18 @@ function dateAfter(start: string, days: number): string {
   return date.toISOString().slice(0, 10)
 }
 
-function confidence(outcomes: Outcome[], mealId: string): PlanSlot['confidence'] {
-  const relevant = outcomes.filter((outcome) => outcome.mealId === mealId && (outcome.acceptance === 'accepted' || outcome.acceptance === 'rejected'))
-  const count = relevant.length
-  if (relevant.some((outcome) => outcome.acceptance === 'accepted') && relevant.some((outcome) => outcome.acceptance === 'rejected')) return 'Learning'
-  return count === 0 ? 'Estimated' : count < 3 ? 'Learning' : 'Established'
-}
-
 export function buildWeeklyPlan(state: PlannerState, startDate: string, optionalAction: OptionalAction = 'fallback'): WeeklyPlan {
+  const outcomes = correctedOutcomes(state.outcomes)
   const excluded = state.meals.flatMap((meal) => {
     if (!meal.active) return [{ mealId: meal.id, reason: 'Meal is inactive.' }]
     const eligibility = mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview })
     return eligibility.eligible ? [] : [{ mealId: meal.id, reason: eligibility.reason }]
   })
   const eligible = state.meals.filter((meal) => !excluded.some((item) => item.mealId === meal.id))
-  const unfamiliar = eligible.filter((meal) => meal.provisional && !state.outcomes.some((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'accepted'))
+  const unfamiliar = eligible.filter((meal) => meal.provisional && !outcomes.some((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'accepted'))
   const optionalMeal = unfamiliar.sort((a, b) => a.id.localeCompare(b.id))[0]
   const familiar = eligible.filter((meal) => !unfamiliar.includes(meal))
-  const fallback = optionalMeal ? familiar.filter((meal) => state.outcomes.some((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'accepted')).sort((a, b) => a.id.localeCompare(b.id))[0] : undefined
+  const fallback = optionalMeal ? familiar.filter((meal) => outcomes.some((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'accepted')).sort((a, b) => a.id.localeCompare(b.id))[0] : undefined
   const optionalSelection = optionalMeal && fallback && (optionalAction === 'use' || optionalAction === 'adapt' && optionalMeal.adaptations?.length)
   const candidates = [...familiar, ...(optionalSelection ? [optionalMeal] : [])]
   const slots: PlanSlot[] = []
@@ -44,8 +40,9 @@ export function buildWeeklyPlan(state: PlannerState, startDate: string, optional
     const constrained = state.household.scheduleExceptions.some((exception) => exception.date === date && exception.constrained)
     const ranked = candidates.filter((meal) => meal !== optionalMeal || cookingDay === 0).map((meal) => {
       const recipe = state.recipes.filter((item) => item.mealId === meal.id).sort((a, b) => a.id.localeCompare(b.id))[0]
-      const timingKnown = recipe?.prepMinutes !== undefined && recipe?.cookMinutes !== undefined
-      const minutes = (recipe?.prepMinutes ?? 0) + (recipe?.cookMinutes ?? 0)
+      const observed = outcomes.filter((outcome) => outcome.mealId === meal.id).map(observedElapsedMinutes).filter((minutes): minutes is number => minutes !== undefined)
+      const timingKnown = observed.length > 0 || recipe?.prepMinutes !== undefined && recipe?.cookMinutes !== undefined
+      const minutes = observed.length ? Math.round(observed.reduce((total, value) => total + value, 0) / observed.length) : (recipe?.prepMinutes ?? 0) + (recipe?.cookMinutes ?? 0)
       const fits = !constrained || timingKnown && minutes <= 30
       if (!fits) {
         const reason = timingKnown ? `Does not fit constrained night on ${date}.` : `Timing is unknown on constrained night ${date}.`
@@ -53,9 +50,10 @@ export function buildWeeklyPlan(state: PlannerState, startDate: string, optional
         return undefined
       }
       const prior = slots.filter((slot) => slot.mealId === meal.id && slot.leftoverFrom === undefined).length
-      const band = confidence(state.outcomes, meal.id)
-      const accepted = state.outcomes.filter((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'accepted').length
-      const rejected = state.outcomes.filter((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'rejected').length
+      const learning = mealLearning(state.outcomes, meal.id)
+      const band = learning.confidence
+      const accepted = outcomes.filter((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'accepted').length
+      const rejected = outcomes.filter((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'rejected').length
       const historyScore = accepted || rejected ? Math.round(PLAN_WEIGHTS.acceptanceHistory * accepted / (accepted + rejected)) : PLAN_WEIGHTS.acceptanceHistory / 2
       const confidenceScore = band === 'Established' ? PLAN_WEIGHTS.confidence : band === 'Learning' ? PLAN_WEIGHTS.confidence / 2 : 0
       const plannedLeftovers = meal.plannedLeftoverDinner && cookingDay < 6
@@ -64,7 +62,7 @@ export function buildWeeklyPlan(state: PlannerState, startDate: string, optional
       const reasons = [
         `${accepted || rejected ? `Household outcomes contribute ${historyScore}/${PLAN_WEIGHTS.acceptanceHistory}.` : `No household outcome yet (${historyScore}/${PLAN_WEIGHTS.acceptanceHistory} starting point).`}`,
         constrained ? 'Fits this constrained night (18 effort/time + 12 schedule).' : 'Fits the household schedule.',
-        ...(timingKnown ? [] : ['Timing is unknown, so effort/time fit has no points.']),
+        ...(timingKnown ? observed.length ? [`Observed elapsed time is ${minutes} minutes.`] : [] : ['Timing is unknown, so effort/time fit has no points.']),
         meal.adaptations?.length ? 'A saved shared-meal adaptation is available (12 adaptation).' : 'No saved shared-meal adaptation is needed.',
         prior ? 'Used again after other options.' : 'Keeps this week varied (12 variety).',
         ...(plannedLeftovers ? ['Planned leftovers cover the following night (8 leftover fit).'] : []),

@@ -32,6 +32,16 @@ describe('local app-state persistence', () => {
     expect(loadAppState(storage)).toEqual({ kind: 'ready', state })
   })
 
+  it('restores cooking and delayed-feedback fields after reload', () => {
+    const storage = storageWith()
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Tacos', active: true })
+    state.plans.push({ id: 'plan-1', confirmed: true, slots: [{ id: 'slot-1', date: '2026-08-17', mealId: 'meal-1', cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T17:25:00.000Z', feedbackEligibleAt: '2026-08-17T17:55:00.000Z', feedbackDismissed: true }] } as never)
+
+    expect(saveAppState(storage, state)).toEqual({ saved: true })
+    expect(loadAppState(storage)).toMatchObject({ kind: 'ready', state: { plans: [expect.objectContaining({ slots: [expect.objectContaining({ feedbackEligibleAt: '2026-08-17T17:55:00.000Z', feedbackDismissed: true })] })] } })
+  })
+
   it.each(['{broken', JSON.stringify({ schemaVersion: 2 })])(
     'enters recovery for invalid stored data without overwriting it',
     (raw) => {

@@ -97,4 +97,16 @@ describe('V1 state validation', () => {
     expect(importAppState(raw)).toEqual(state)
     expect(loadAppState(storage)).toEqual({ kind: 'ready', state })
   })
+
+  it('rejects a ready dinner without cooking start and ambiguous outcome corrections', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Tacos', active: true })
+    state.plans.push({ id: 'plan-1', slots: [{ id: 'slot-1', date: '2026-08-17', mealId: 'meal-1', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }] } as never)
+    expect(() => importAppState(JSON.stringify(state))).toThrow()
+    state.plans[0].slots[0] = { ...state.plans[0].slots[0], cookingStartedAt: '2026-08-17T18:30:00.000Z' } as never
+    expect(() => importAppState(JSON.stringify(state))).toThrow()
+    state.plans[0].slots[0] = { ...state.plans[0].slots[0], cookingStartedAt: '2026-08-17T17:30:00.000Z' } as never
+    state.outcomes.push({ id: 'old', planId: 'plan-1', planSlotId: 'slot-1', mealId: 'meal-1' }, { id: 'fork-a', planId: 'plan-1', planSlotId: 'slot-1', mealId: 'meal-1', correctionOfOutcomeId: 'old' }, { id: 'fork-b', planId: 'plan-1', planSlotId: 'slot-1', mealId: 'meal-1', correctionOfOutcomeId: 'old' })
+    expect(() => importAppState(JSON.stringify(state))).toThrow()
+  })
 })

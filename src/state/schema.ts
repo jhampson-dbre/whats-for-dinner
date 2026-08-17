@@ -31,7 +31,7 @@ const recipeSchema = z.object({
 const planSlotSchema = z.object({
   id, date, mealId: id.optional(), recipeId: id.optional(), leftoverLotIds: z.array(id).max(50).optional(), leftoverDependencyIds: z.array(id).max(50).optional(), leftoverFromSlotId: id.optional(),
   score: z.number().min(0).max(100).optional(), confidence: z.enum(['Estimated', 'Learning', 'Established']).optional(), scoreReasons: z.array(text).max(20).optional(),
-  cookingStartedAt: timestamp.optional(), dinnerReadyAt: timestamp.optional(), feedbackEligibleAt: timestamp.optional(), feedbackDismissed: z.boolean().optional(),
+  cookingStartedAt: timestamp.optional(), dinnerReadyAt: timestamp.optional(), feedbackEligibleAt: timestamp.optional(), feedbackDismissed: z.boolean().optional(), expectedDinerIds: z.array(id).max(20).optional(),
 }).strict()
 const planVariantSchema = z.object({ id, label: shortText, mealId: id.optional(), recipeId: id.optional() }).strict()
 const shoppingItemId = z.string().min(1).max(128)
@@ -41,10 +41,11 @@ const planSchema = z.object({
   id, slots: z.array(planSlotSchema).max(31), confirmed: z.boolean().optional(), variants: z.array(planVariantSchema).max(100).optional(), scoreReasons: z.array(text).max(50).optional(), shopping: shoppingSchema.optional(), repairRevisions: z.array(repairRevisionSchema).max(100).optional(),
 }).strict()
 const leftoverLotSchema = z.object({
-  id, sourcePlanId: id.optional(), sourceSlotId: id.optional(), sourceMealId: id.optional(), dinnerCoverage: z.enum(['none', 'some', 'one', 'more-than-one']).optional(),
+  id, sourcePlanId: id.optional(), sourceSlotId: id.optional(), sourceMealId: id.optional(), dinnerCoverage: z.enum(['none', 'some', 'one', 'more-than-one']).optional(), active: z.boolean().optional(),
 }).strict()
+const personFeedbackSchema = z.object({ dinerId: id, acceptance: z.enum(['accepted', 'rejected', 'neutral']), neutralReason: z.enum(['absent', 'ate-separately', 'not-hungry']).optional() }).strict()
 const outcomeSchema = z.object({
-  id, planId: id.optional(), planSlotId: id.optional(), mealId: id.optional(), recipeId: id.optional(), correctionOfOutcomeId: id.optional(), recordedAt: timestamp.optional(), cookingStartedAt: timestamp.optional(), dinnerReadyAt: timestamp.optional(), availability: z.enum(['unknown', 'available', 'unavailable']).optional(), acceptance: z.enum(['unknown', 'accepted', 'rejected', 'neutral']).optional(), leftoverCoverage: z.enum(['none', 'some', 'one', 'more-than-one']).optional(), recoveryClassification: z.enum(['none', 'successful', 'unsuccessful']).optional(),
+  id, planId: id.optional(), planSlotId: id.optional(), mealId: id.optional(), recipeId: id.optional(), correctionOfOutcomeId: id.optional(), recordedAt: timestamp.optional(), cookingStartedAt: timestamp.optional(), dinnerReadyAt: timestamp.optional(), activeEffortMinutes: minutes.optional(), availability: z.enum(['unknown', 'available', 'unavailable']).optional(), acceptance: z.enum(['unknown', 'accepted', 'rejected', 'neutral']).optional(), personFeedback: z.array(personFeedbackSchema).max(20).optional(), leftoverCoverage: z.enum(['none', 'some', 'one', 'more-than-one']).optional(), recoveryClassification: z.enum(['none', 'successful', 'unsuccessful']).optional(),
 }).strict()
 
 function referenceIssue(ctx: z.RefinementCtx, path: (string | number)[], label: string): void {
@@ -82,7 +83,6 @@ export const appStateV1Schema = z.object({
   const plans = new Set(state.plans.map(({ id: value }) => value))
   const leftovers = new Set(state.leftoverLots.map(({ id: value }) => value))
   const adaptations = new Set(state.meals.flatMap((meal) => meal.adaptations?.map(({ id: value }) => value) ?? []))
-  const outcomes = new Set(state.outcomes.map(({ id: value }) => value))
   const slots = new Set(state.plans.flatMap(({ slots: values }) => values.map(({ id: value }) => value)))
   const requireReference = (exists: boolean, path: (string | number)[], label: string) => { if (!exists) referenceIssue(ctx, path, label) }
 
@@ -101,6 +101,9 @@ export const appStateV1Schema = z.object({
     if (slot.mealId) requireReference(meals.has(slot.mealId), ['plans', planIndex, 'slots', slotIndex, 'mealId'], 'meal')
     if (slot.recipeId) requireReference(recipes.has(slot.recipeId), ['plans', planIndex, 'slots', slotIndex, 'recipeId'], 'recipe')
     if (slot.leftoverFromSlotId) requireReference(plan.slots.slice(0, slotIndex).some((value) => value.id === slot.leftoverFromSlotId), ['plans', planIndex, 'slots', slotIndex, 'leftoverFromSlotId'], 'earlier plan slot')
+    slot.expectedDinerIds?.forEach((ref, refIndex) => requireReference(diners.has(ref), ['plans', planIndex, 'slots', slotIndex, 'expectedDinerIds', refIndex], 'diner'))
+    if (slot.dinnerReadyAt && !slot.cookingStartedAt) ctx.addIssue({ code: 'custom', path: ['plans', planIndex, 'slots', slotIndex, 'dinnerReadyAt'], message: 'Dinner ready requires cooking start.' })
+    if (slot.cookingStartedAt && slot.dinnerReadyAt && Date.parse(slot.dinnerReadyAt) < Date.parse(slot.cookingStartedAt)) ctx.addIssue({ code: 'custom', path: ['plans', planIndex, 'slots', slotIndex, 'dinnerReadyAt'], message: 'Dinner ready cannot precede cooking start.' })
     slot.leftoverLotIds?.forEach((ref, refIndex) => requireReference(leftovers.has(ref), ['plans', planIndex, 'slots', slotIndex, 'leftoverLotIds', refIndex], 'leftover lot'))
     slot.leftoverDependencyIds?.forEach((ref, refIndex) => requireReference(leftovers.has(ref), ['plans', planIndex, 'slots', slotIndex, 'leftoverDependencyIds', refIndex], 'leftover lot'))
   }))
@@ -124,7 +127,13 @@ export const appStateV1Schema = z.object({
     if (value.planSlotId) requireReference(slots.has(value.planSlotId), ['outcomes', index, 'planSlotId'], 'plan slot')
     if (value.mealId) requireReference(meals.has(value.mealId), ['outcomes', index, 'mealId'], 'meal')
     if (value.recipeId) requireReference(recipes.has(value.recipeId), ['outcomes', index, 'recipeId'], 'recipe')
-    if (value.correctionOfOutcomeId) requireReference(outcomes.has(value.correctionOfOutcomeId), ['outcomes', index, 'correctionOfOutcomeId'], 'outcome')
+    if (value.correctionOfOutcomeId) {
+      const prior = state.outcomes.slice(0, index).find((outcome) => outcome.id === value.correctionOfOutcomeId)
+      requireReference(Boolean(prior), ['outcomes', index, 'correctionOfOutcomeId'], 'earlier outcome')
+      if (prior && (prior.planId !== value.planId || prior.planSlotId !== value.planSlotId || prior.mealId !== value.mealId)) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'correctionOfOutcomeId'], message: 'Correction must target the same plan slot and meal.' })
+      if (state.outcomes.filter((outcome) => outcome.correctionOfOutcomeId === value.correctionOfOutcomeId).length > 1) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'correctionOfOutcomeId'], message: 'Outcome corrections cannot fork.' })
+    }
+    value.personFeedback?.forEach((feedback, feedbackIndex) => requireReference(diners.has(feedback.dinerId), ['outcomes', index, 'personFeedback', feedbackIndex, 'dinerId'], 'diner'))
   })
 })
 

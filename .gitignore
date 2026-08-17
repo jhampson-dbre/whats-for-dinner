@@ -1,4 +1,5 @@
 .trekker/
 node_modules/
 dist/
+test-results/
 *.tsbuildinfo

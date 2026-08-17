@@ -69,6 +69,17 @@ describe('weekly plan', () => {
     expect(plan.optional).toMatchObject({ mealId: 'neutral', fallbackMealId: 'fallback' })
   })
 
+  it('ignores superseded household evidence and uses observed elapsed time for constrained nights', () => {
+    const plan = buildWeeklyPlan({ ...base, household: { ...base.household, scheduleExceptions: [{ id: 'late', date: '2026-08-17', constrained: true }] }, meals: [{ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' }], outcomes: [
+      { id: 'old', mealId: 'tacos', acceptance: 'rejected' },
+      { id: 'fixed', correctionOfOutcomeId: 'old', mealId: 'tacos', acceptance: 'accepted', cookingStartedAt: '2026-08-16T17:00:00.000Z', dinnerReadyAt: '2026-08-16T17:25:00.000Z', activeEffortMinutes: 10 },
+    ] }, '2026-08-17')
+
+    expect(plan.slots[0]).toMatchObject({ mealId: 'tacos', confidence: 'Learning' })
+    expect(plan.slots[0].reasons).toEqual(expect.arrayContaining(['Observed elapsed time is 25 minutes.']))
+    expect(plan.slots[0].reasons.join(' ')).not.toContain('rejected')
+  })
+
   it('offers at most one unfamiliar meal only with a proven fallback, and defaults to that fallback', () => {
     const plan = buildWeeklyPlan({ ...base, meals: [
       { id: 'fallback', name: 'Fallback', active: true, safetyReview: 'approved' },
