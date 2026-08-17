@@ -213,7 +213,8 @@ maximum 32 MiB selected file, at most 1,000 entries, entry names no longer than 
 characters, and exactly one root `recipes.html`. Reject absolute, drive-qualified,
 backslash, dot-segment, encrypted, malformed, or unsupported archives. Check declared
 sizes before extraction and cap decoded `recipes.html` at 5 MiB. Never extract or open
-image entries.
+image entries. Support the supplied export's ZIP64 per-entry size fields while keeping
+ZIP64 archive directories, counts, and offsets unsupported.
 
 Parse at most 1,000 `.recipe-details` records with the native `DOMParser`. Read only
 fixture-proven Recipe Keeper fields for external recipe ID, title, source metadata,

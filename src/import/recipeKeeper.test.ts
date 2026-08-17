@@ -15,6 +15,15 @@ const duplicateRecipesDocument = () => {
 const aggregateHtml = (field: 'ingredients' | 'instructions') => field === 'ingredients'
   ? fixture.replace('</div>\n    <div itemprop="recipeDirections"', `${Array.from({ length: 65 }, () => `<p>${'x'.repeat(2048)}</p>`).join('')}</div>\n    <div itemprop="recipeDirections"`)
   : fixture.replace('</div>\n  </article>', `${Array.from({ length: 65 }, () => `<p>${'x'.repeat(2048)}</p>`).join('')}</div>\n  </article>`)
+const zip64Sizes = (html: string) => {
+  const name = strToU8('recipes.html'); const content = strToU8(html); const extra = new Uint8Array(20); const extraView = new DataView(extra.buffer)
+  extraView.setUint16(0, 1, true); extraView.setUint16(2, 16, true); extraView.setBigUint64(4, BigInt(content.length), true); extraView.setBigUint64(12, BigInt(content.length), true)
+  const localLength = 30 + name.length + extra.length + content.length; const centralLength = 46 + name.length + extra.length; const output = new Uint8Array(localLength + centralLength + 22); const data = new DataView(output.buffer)
+  data.setUint32(0, 0x04034b50, true); data.setUint16(4, 45, true); data.setUint16(6, 0x0800, true); data.setUint32(18, 0xffffffff, true); data.setUint32(22, 0xffffffff, true); data.setUint16(26, name.length, true); data.setUint16(28, extra.length, true); output.set(name, 30); output.set(extra, 30 + name.length); output.set(content, 30 + name.length + extra.length)
+  const central = localLength; data.setUint32(central, 0x02014b50, true); data.setUint16(central + 4, 45, true); data.setUint16(central + 6, 45, true); data.setUint16(central + 8, 0x0800, true); data.setUint32(central + 20, 0xffffffff, true); data.setUint32(central + 24, 0xffffffff, true); data.setUint16(central + 28, name.length, true); data.setUint16(central + 30, extra.length, true); output.set(name, central + 46); output.set(extra, central + 46 + name.length)
+  const end = localLength + centralLength; data.setUint32(end, 0x06054b50, true); data.setUint16(end + 8, 1, true); data.setUint16(end + 10, 1, true); data.setUint32(end + 12, centralLength, true); data.setUint32(end + 16, localLength, true)
+  return output
+}
 
 describe('Recipe Keeper ZIP boundary', () => {
   it('reads only normalized recipe candidates from the root recipes document', async () => {
@@ -22,6 +31,10 @@ describe('Recipe Keeper ZIP boundary', () => {
       skipped: 0,
       candidates: [{ externalId: 'rk-1', title: 'Weeknight Soup', source: 'Family notes', category: 'Dinner / Soup', prepMinutes: 10, cookMinutes: 20, yield: '4 bowls', ingredients: ['1 onion', 'Broth'], instructions: ['Cook onion.', 'Add broth.'] }],
     })
+  })
+
+  it('reads ZIP64 per-entry sizes while retaining a normal archive directory', async () => {
+    await expect(readRecipeKeeperZip(zip64Sizes(fixture))).resolves.toMatchObject({ candidates: [{ externalId: 'rk-1' }] })
   })
 
   it.each([
