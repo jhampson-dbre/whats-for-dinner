@@ -9,6 +9,7 @@ import {
 } from './state/storage'
 import type { AppStateV1 } from './state/schema'
 import { mealEligibility } from './domain/mealEligibility'
+import { buildWeeklyPlan } from './domain/weeklyPlan'
 import { readRecipeKeeperZip, type RecipeKeeperCandidate } from './import/recipeKeeper'
 import './app.css'
 
@@ -68,13 +69,18 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
   const [restrictionDinerId, setRestrictionDinerId] = useState('')
   const [exceptionDate, setExceptionDate] = useState('')
   const [exceptionNote, setExceptionNote] = useState('')
+  const [exceptionConstrained, setExceptionConstrained] = useState(false)
   const [mealName, setMealName] = useState('')
+  const [plannedLeftoverDinner, setPlannedLeftoverDinner] = useState(false)
   const [candidates, setCandidates] = useState<RecipeKeeperCandidate[]>([])
   const [skipped, setSkipped] = useState(0)
   const [candidateQuery, setCandidateQuery] = useState('')
   const [selectedCandidate, setSelectedCandidate] = useState('')
   const [destination, setDestination] = useState<'new' | 'existing' | 'recipe'>('new')
   const [existingMealId, setExistingMealId] = useState('')
+  const [planStartDate, setPlanStartDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [weeklyPreview, setWeeklyPreview] = useState<ReturnType<typeof buildWeeklyPlan>>()
+  const [optionalAction, setOptionalAction] = useState<'fallback' | 'use' | 'adapt' | 'reject'>('fallback')
 
   const commit = (next: AppStateV1) => {
     setSaveStatus(saveAppState(localStorage, next).saved ? 'saved' : 'unsaved')
@@ -103,15 +109,41 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
     if (!exceptionDate || state.household.scheduleExceptions.length >= 100) return
     const note = exceptionNote.trim()
     if (note.length > 500) return
-    update((current) => ({ ...current, household: { ...current.household, scheduleExceptions: [...current.household.scheduleExceptions, { id: crypto.randomUUID(), date: exceptionDate, ...(note && { note }) }] } }))
+    update((current) => ({ ...current, household: { ...current.household, scheduleExceptions: [...current.household.scheduleExceptions, { id: crypto.randomUUID(), date: exceptionDate, ...(note && { note }), ...(exceptionConstrained && { constrained: true }) }] } }))
     setExceptionDate('')
     setExceptionNote('')
+    setExceptionConstrained(false)
   }
   const addMeal = () => {
     const name = mealName.trim()
     if (!name || name.length > 160 || state.meals.length >= 500) return
-    update((current) => ({ ...current, meals: [...current.meals, { id: crypto.randomUUID(), name, active: true, safetyReview: 'unknown' }] }))
+    update((current) => ({ ...current, meals: [...current.meals, { id: crypto.randomUUID(), name, active: true, safetyReview: 'unknown', ...(plannedLeftoverDinner && { plannedLeftoverDinner: true }) }] }))
     setMealName('')
+    setPlannedLeftoverDinner(false)
+  }
+  const previewWeeklyPlan = () => {
+    if (!planStartDate) { setWeeklyPreview(undefined); setMessage('Choose a week-start date first.'); return }
+    setOptionalAction('fallback')
+    setWeeklyPreview(buildWeeklyPlan(state, planStartDate))
+  }
+  const chooseOptionalMeal = (action: 'use' | 'adapt' | 'reject') => {
+    setOptionalAction(action)
+    setWeeklyPreview(buildWeeklyPlan(state, planStartDate, action))
+  }
+  const confirmWeeklyPlan = () => {
+    if (!weeklyPreview || weeklyPreview.slots.length !== 7 || state.plans.length >= 100) return
+    const planId = crypto.randomUUID()
+    const slotIds = weeklyPreview.slots.map(() => crypto.randomUUID())
+    const rejectedMealId = optionalAction === 'reject' ? weeklyPreview.optional?.mealId : undefined
+    update((current) => ({ ...current, meals: rejectedMealId ? current.meals.map((meal) => meal.id === rejectedMealId ? { ...meal, active: false } : meal) : current.meals, plans: [...current.plans, {
+      id: planId,
+      confirmed: true,
+      scoreReasons: weeklyPreview.slots.flatMap((slot) => slot.reasons).filter((reason, index, values) => values.indexOf(reason) === index),
+      ...(weeklyPreview.optional && { variants: [{ id: crypto.randomUUID(), label: 'Proven fallback for optional unfamiliar meal', mealId: weeklyPreview.optional.fallbackMealId }] }),
+      slots: weeklyPreview.slots.map((slot, index) => ({ id: slotIds[index], date: slot.date, mealId: slot.mealId, ...(slot.recipeId && { recipeId: slot.recipeId }), ...(slot.leftoverFrom !== undefined && { leftoverFromSlotId: slotIds[slot.leftoverFrom] }), score: slot.score, confidence: slot.confidence, scoreReasons: slot.reasons })),
+    }] }))
+    setWeeklyPreview(undefined)
+    setMessage('Weekly plan confirmed.')
   }
 
   const onImport = (event: ChangeEvent<HTMLInputElement>) => {
@@ -158,7 +190,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
     if (!window.confirm(`Save ${candidate.title}?`)) return
     const recipeId = crypto.randomUUID(); const mealId = targetMeal?.id ?? (destination === 'new' ? crypto.randomUUID() : undefined)
     const recipe = { id: recipeId, externalId: candidate.externalId, title: candidate.title, ...(mealId && { mealId }), source: { provider: 'Recipe Keeper', ...(candidate.source && { reference: candidate.source }) }, ...(candidate.category && { category: candidate.category }), ...(candidate.prepMinutes !== undefined && { prepMinutes: candidate.prepMinutes }), ...(candidate.cookMinutes !== undefined && { cookMinutes: candidate.cookMinutes }), ...(candidate.yield && { yield: candidate.yield }), ...(candidate.ingredients && { ingredients: candidate.ingredients }), ...(candidate.instructions && { instructions: candidate.instructions }) }
-    update((current) => ({ ...current, recipes: [...current.recipes, recipe], meals: destination === 'new' ? [...current.meals, { id: mealId!, name: candidate.title, active: true, safetyReview: 'unknown', recipeIds: [recipeId] }] : targetMeal ? current.meals.map((meal) => meal.id === targetMeal.id ? { ...meal, recipeIds: [...(meal.recipeIds ?? []), recipeId], safetyReview: 'unknown' } : meal) : current.meals }))
+    update((current) => ({ ...current, recipes: [...current.recipes, recipe], meals: destination === 'new' ? [...current.meals, { id: mealId!, name: candidate.title, active: true, provisional: true, safetyReview: 'unknown', recipeIds: [recipeId] }] : targetMeal ? current.meals.map((meal) => meal.id === targetMeal.id ? { ...meal, recipeIds: [...(meal.recipeIds ?? []), recipeId], safetyReview: 'unknown' } : meal) : current.meals }))
     setMessage(destination === 'recipe' ? 'Recipe saved without a meal.' : 'Recipe saved. Confirm compatibility before planning.')
     setCandidates((current) => current.filter((item) => item.externalId !== candidate.externalId)); setSelectedCandidate('')
   }
@@ -187,15 +219,30 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
         <form className="actions" onSubmit={(event) => { event.preventDefault(); addException() }}>
           <label>Exception date<input type="date" value={exceptionDate} onChange={(event) => setExceptionDate(event.target.value)} /></label>
           <label>Exception note<input maxLength={500} value={exceptionNote} onChange={(event) => setExceptionNote(event.target.value)} /></label>
+          <label><input aria-label="Constrained night" type="checkbox" checked={exceptionConstrained} onChange={(event) => setExceptionConstrained(event.target.checked)} /> Constrained night</label>
           <button disabled={state.household.scheduleExceptions.length >= 100}>Add exception</button>
         </form>
         {state.household.scheduleExceptions.length > 0 && <ul>{state.household.scheduleExceptions.map((item) => <li key={item.id}>{item.date}{item.note && `: ${item.note}`}</li>)}</ul>}
+      </section>
+      <section aria-labelledby="weekly-plan-heading">
+        <h2 id="weekly-plan-heading">Weekly plan</h2>
+        <p>Meals marked to cover leftovers reduce cooking nights; all other nights stay cooking nights.</p>
+        <p className="actions"><label>Week starts<input aria-label="Week starts" type="date" value={planStartDate} onChange={(event) => setPlanStartDate(event.target.value)} /></label><button onClick={previewWeeklyPlan} disabled={!planStartDate}>Preview weekly plan</button></p>
+        {weeklyPreview && <div className="weekly-plan-preview">
+          <h3>Weekly plan preview</h3>
+          {weeklyPreview.slots.length === 0 ? <p>No eligible household meal is available to plan.</p> : <ol>{weeklyPreview.slots.map((slot) => <li key={slot.date}><strong>{slot.date}</strong>: {state.meals.find((meal) => meal.id === slot.mealId)?.name} {slot.leftoverFrom !== undefined && '(planned leftovers)'}<br /><small>{slot.confidence} · {slot.score} reliability points. {slot.reasons.join(' ')}</small></li>)}</ol>}
+          {weeklyPreview.excluded.length > 0 && <p>Excluded: {weeklyPreview.excluded.map((item) => `${state.meals.find((meal) => meal.id === item.mealId)?.name}: ${item.reason}`).join(' ')}</p>}
+          {weeklyPreview.optional && <div><p>Optional unfamiliar meal: {state.meals.find((meal) => meal.id === weeklyPreview.optional?.mealId)?.name}. No action keeps proven fallback {state.meals.find((meal) => meal.id === weeklyPreview.optional?.fallbackMealId)?.name}.</p><p className="actions"><button onClick={() => chooseOptionalMeal('use')}>Use this meal</button><button onClick={() => chooseOptionalMeal('adapt')}>Make it work for us</button><button onClick={() => chooseOptionalMeal('reject')}>Not for us</button></p>{optionalAction !== 'fallback' && <p>{optionalAction === 'adapt' && !state.meals.find((meal) => meal.id === weeklyPreview.optional?.mealId)?.adaptations?.length ? 'No saved shared adaptation is available, so the proven fallback remains selected.' : optionalAction === 'reject' ? 'The proven fallback remains selected.' : weeklyPreview.slots.some((slot) => slot.mealId === weeklyPreview.optional?.mealId) ? 'Your chosen unfamiliar meal is in this preview.' : 'That unfamiliar meal cannot fit the first cooking night, so the proven fallback remains selected.'}</p>}</div>}
+          <button onClick={confirmWeeklyPlan} disabled={weeklyPreview.slots.length !== 7 || state.plans.length >= 100}>Confirm weekly plan</button>
+        </div>}
+        {state.plans.filter((plan) => plan.confirmed && plan.slots.length === 7).slice(-1).map((plan) => <div key={plan.id}><h3>Current weekly plan</h3><ol>{plan.slots.map((slot) => <li key={slot.id}>{slot.date}: {state.meals.find((meal) => meal.id === slot.mealId)?.name}{slot.leftoverFromSlotId && ' (planned leftovers)'}</li>)}</ol></div>)}
       </section>
       <section aria-labelledby="meals-heading">
         <h2 id="meals-heading">Meal library</h2>
         <p>{state.meals.filter((meal) => meal.active).length} selected. For a useful first plan, select 8–12 active meals.</p>
         <form className="actions" onSubmit={(event) => { event.preventDefault(); addMeal() }}>
           <label>Meal name<input maxLength={160} value={mealName} onChange={(event) => setMealName(event.target.value)} /></label>
+          <label><input aria-label={`Plan one leftover dinner for ${mealName}`} type="checkbox" checked={plannedLeftoverDinner} onChange={(event) => setPlannedLeftoverDinner(event.target.checked)} /> Plan one leftover dinner</label>
           <button disabled={state.meals.length >= 500}>Add meal</button>
         </form>
         <ul className="meal-list">
@@ -205,6 +252,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
             return <li key={meal.id}>
               <label>Meal name {meal.name}<input maxLength={160} value={meal.name} onChange={(event) => { if (event.target.value.trim() && event.target.value.length <= 160) update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, name: event.target.value } : currentMeal) })) }} /></label>
               <label><input aria-label={`Active ${meal.name}`} type="checkbox" checked={meal.active} onChange={(event) => update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, active: event.target.checked } : currentMeal) }))} /> Active</label>
+              <label><input aria-label={`Plan one leftover dinner for ${meal.name}`} type="checkbox" checked={meal.plannedLeftoverDinner === true} onChange={(event) => update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, plannedLeftoverDinner: event.target.checked || undefined } : currentMeal) }))} /> Plan one leftover dinner</label>
               <label>Safety review for {meal.name}<select value={meal.safetyReview ?? 'unknown'} onChange={(event) => update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, safetyReview: event.target.value as 'unknown' | 'approved' | 'rejected' } : currentMeal) }))}><option value="unknown">Unknown</option><option value="approved">Compatibility confirmed</option><option value="rejected">Not compatible</option></select></label>
               {recipes.map((recipe) => <p key={recipe.id}>Recipe: {recipe.title}</p>)}
               <p>{recipes.length === 0 ? 'No linked recipe. Grocery ingredients are incomplete.' : `${recipes.length} linked recipe${recipes.length === 1 ? '' : 's'}. ${recipes.some((recipe) => !recipe.ingredients?.length) ? 'Grocery ingredients are incomplete.' : 'Grocery ingredients are available.'}`}</p>

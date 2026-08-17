@@ -9,3 +9,5 @@ section { margin: 2rem 0; }
 .hint { color: #5d4217; }
 .recipe-import { display: grid; gap: .75rem; margin-top: .75rem; }
 .recipe-import fieldset { display: grid; gap: .5rem; }
+.weekly-plan-preview { padding: 1rem; border: 1px solid #c8c6bd; border-radius: .5rem; }
+.weekly-plan-preview small { color: #4b534c; }

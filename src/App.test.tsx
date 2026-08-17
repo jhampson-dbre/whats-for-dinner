@@ -123,6 +123,17 @@ describe('household onboarding and meal library', () => {
     expect(screen.getByText('0 selected. For a useful first plan, select 8–12 active meals.')).toBeInTheDocument()
   })
 
+  it('persists whether a meal intentionally covers one leftover dinner', () => {
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Meal name'), { target: { value: 'Chili' } })
+    fireEvent.click(screen.getByLabelText('Plan one leftover dinner for Chili'))
+    fireEvent.click(screen.getByRole('button', { name: 'Add meal' }))
+
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({ meals: [{ name: 'Chili', plannedLeftoverDinner: true }] })
+    fireEvent.click(screen.getByLabelText('Plan one leftover dinner for Chili'))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').meals[0]).not.toHaveProperty('plannedLeftoverDinner')
+  })
+
   it('does not save a blank inline meal name', () => {
     render(<App />)
     fireEvent.change(screen.getByLabelText('Meal name'), { target: { value: 'Soup' } })
@@ -188,6 +199,75 @@ describe('household onboarding and meal library', () => {
   })
 })
 
+describe('weekly planning', () => {
+  afterEach(() => {
+    localStorage.clear()
+    vi.restoreAllMocks()
+  })
+
+  it('keeps the seven-day preview out of AppStateV1 until confirmation, then restores it', () => {
+    const state = createEmptyAppState()
+    state.meals.push(
+      { id: 'meal-a', name: 'Soup', active: true, safetyReview: 'approved' },
+      { id: 'meal-b', name: 'Pasta', active: true, safetyReview: 'approved' },
+    )
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    const view = render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    expect(screen.getByRole('heading', { name: 'Weekly plan preview' })).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots).toHaveLength(7)
+    view.unmount()
+
+    render(<App />)
+    expect(screen.getByRole('heading', { name: 'Current weekly plan' })).toBeInTheDocument()
+    expect(screen.getByText(/2026-08-17: Soup/)).toBeInTheDocument()
+  })
+
+  it('does not preview a plan without a week-start date', () => {
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '' } })
+
+    expect(screen.getByRole('button', { name: 'Preview weekly plan' })).toBeDisabled()
+  })
+
+  it('keeps the fallback selected when an optional meal cannot fit the first cooking night', () => {
+    const state = createEmptyAppState()
+    state.household.scheduleExceptions.push({ id: 'late', date: '2026-08-17', constrained: true })
+    state.meals.push(
+      { id: 'fallback', name: 'Fallback', active: true, safetyReview: 'approved' },
+      { id: 'new', name: 'New', active: true, provisional: true, safetyReview: 'approved' },
+    )
+    state.recipes.push({ id: 'new-recipe', title: 'New', mealId: 'new', prepMinutes: 20, cookMinutes: 30 })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use this meal' }))
+
+    expect(screen.getByText('That unfamiliar meal cannot fit the first cooking night, so the proven fallback remains selected.')).toBeInTheDocument()
+  })
+
+  it('makes a rejected provisional meal inactive when the weekly plan is confirmed', () => {
+    const state = createEmptyAppState()
+    state.meals.push(
+      { id: 'fallback', name: 'Fallback', active: true, safetyReview: 'approved' },
+      { id: 'new', name: 'New', active: true, provisional: true, safetyReview: 'approved' },
+    )
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Not for us' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
+
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({ meals: expect.arrayContaining([expect.objectContaining({ id: 'new', active: false })]) })
+  })
+})
+
 describe('Recipe Keeper import', () => {
   afterEach(() => { localStorage.clear(); vi.restoreAllMocks() })
 
@@ -204,7 +284,7 @@ describe('Recipe Keeper import', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }))
 
     await waitFor(() => expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({
-      meals: expect.arrayContaining([expect.objectContaining({ name: 'Weeknight Soup', safetyReview: 'unknown' })]),
+      meals: expect.arrayContaining([expect.objectContaining({ name: 'Weeknight Soup', provisional: true, safetyReview: 'unknown' })]),
       recipes: expect.arrayContaining([expect.objectContaining({ title: 'Weeknight Soup', externalId: 'rk-1', source: { provider: 'Recipe Keeper', reference: 'Family notes' } })]),
     }))
   })

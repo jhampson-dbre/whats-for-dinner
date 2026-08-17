@@ -51,6 +51,24 @@ describe('V1 state validation', () => {
     expect(loadAppState(storage)).toEqual({ kind: 'ready', state: saved })
   })
 
+  it('allows planned-leftover references only to earlier slots in the same plan', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan-1', slots: [
+      { id: 'slot-1', date: '2026-08-17', mealId: 'meal-1' },
+      { id: 'slot-2', date: '2026-08-18', mealId: 'meal-1', leftoverFromSlotId: 'slot-1' },
+    ] } as never)
+
+    expect(importAppState(JSON.stringify(state))).toEqual(state)
+    state.plans[0].slots[1] = { ...state.plans[0].slots[1], leftoverFromSlotId: 'missing-slot' } as never
+    expect(() => importAppState(JSON.stringify(state))).toThrow()
+    state.plans[0].slots[1] = { ...state.plans[0].slots[1], leftoverFromSlotId: 'slot-2' } as never
+    expect(() => importAppState(JSON.stringify(state))).toThrow()
+    state.plans[0].slots[1] = { ...state.plans[0].slots[1], leftoverFromSlotId: 'slot-1' } as never
+    state.plans.push({ id: 'plan-2', slots: [{ id: 'slot-3', date: '2026-08-19', mealId: 'meal-1', leftoverFromSlotId: 'slot-1' }] } as never)
+    expect(() => importAppState(JSON.stringify(state))).toThrow()
+  })
+
   it('restores surrounding whitespace exactly', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'meal-1', name: ' Tacos ', active: true })
