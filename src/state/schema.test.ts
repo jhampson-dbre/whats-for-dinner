@@ -38,6 +38,31 @@ describe('V1 state validation', () => {
     expect(() => importAppState(JSON.stringify(state))).toThrow('Recipe belongs to another meal')
   })
 
+  it('rejects a recipe listed by more than one meal', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Soup', active: true, recipeIds: ['recipe-1'] }, { id: 'meal-2', name: 'Pasta', active: true, recipeIds: ['recipe-1'] })
+    state.recipes.push({ id: 'recipe-1', title: 'Dinner' })
+
+    expect(() => importAppState(JSON.stringify(state))).toThrow('Recipe belongs to more than one meal')
+  })
+
+  it('allows unlinked, recipe-sided, meal-sided, and matching two-sided recipe ownership', () => {
+    const state = createEmptyAppState()
+    state.meals.push(
+      { id: 'recipe-sided', name: 'Recipe-sided', active: true },
+      { id: 'meal-sided', name: 'Meal-sided', active: true, recipeIds: ['meal-sided-recipe'] },
+      { id: 'two-sided', name: 'Two-sided', active: true, recipeIds: ['two-sided-recipe'] },
+    )
+    state.recipes.push(
+      { id: 'unlinked-recipe', title: 'Unlinked' },
+      { id: 'recipe-sided-recipe', title: 'Recipe-sided', mealId: 'recipe-sided' },
+      { id: 'meal-sided-recipe', title: 'Meal-sided' },
+      { id: 'two-sided-recipe', title: 'Two-sided', mealId: 'two-sided' },
+    )
+
+    expect(importAppState(JSON.stringify(state))).toEqual(state)
+  })
+
   it('rejects duplicate plan-slot IDs without replacing saved state', () => {
     const saved = createEmptyAppState()
     saved.meals.push({ id: 'saved-meal', name: 'Saved', active: true })

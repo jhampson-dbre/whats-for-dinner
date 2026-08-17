@@ -85,6 +85,7 @@ export const appStateV1Schema = z.object({
   const adaptations = new Set(state.meals.flatMap((meal) => meal.adaptations?.map(({ id: value }) => value) ?? []))
   const slots = new Set(state.plans.flatMap(({ slots: values }) => values.map(({ id: value }) => value)))
   const slotRecords = state.plans.flatMap((plan) => plan.slots.map((slot) => ({ plan, slot })))
+  const recipeMealIds = new Map<string, string>()
   const requireReference = (exists: boolean, path: (string | number)[], label: string) => { if (!exists) referenceIssue(ctx, path, label) }
 
   state.household.hardRestrictions.forEach((value, index) => { if (value.dinerId) requireReference(diners.has(value.dinerId), ['household', 'hardRestrictions', index, 'dinerId'], 'diner') })
@@ -92,6 +93,9 @@ export const appStateV1Schema = z.object({
   state.meals.forEach((value, index) => {
     value.recipeIds?.forEach((ref, refIndex) => {
       requireReference(recipes.has(ref), ['meals', index, 'recipeIds', refIndex], 'recipe')
+      const ownerMealId = recipeMealIds.get(ref)
+      if (ownerMealId && ownerMealId !== value.id) ctx.addIssue({ code: 'custom', path: ['meals', index, 'recipeIds', refIndex], message: 'Recipe belongs to more than one meal.' })
+      else recipeMealIds.set(ref, value.id)
       if (state.recipes.some((recipe) => recipe.id === ref && recipe.mealId && recipe.mealId !== value.id)) ctx.addIssue({ code: 'custom', path: ['meals', index, 'recipeIds', refIndex], message: 'Recipe belongs to another meal.' })
     })
     value.adaptations?.forEach((adaptation, adaptationIndex) => {
