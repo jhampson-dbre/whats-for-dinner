@@ -57,9 +57,15 @@ gates, validators, or review routing.
 
 - Use `$feature-discovery` for substantial new behavior unless the request is already a
   small, fully specified change. The main session owns user approvals.
-- Use `feature-planner-advisor` for approved discovery briefs. Invoke
-  `architecture-design-reviewer` or `senior-developer-reviewer` only for a named material
-  system or delivery risk.
+- Use `feature-planner-advisor` for approved discovery briefs. After its advice and
+  before starting an implementation task, the coordinator names applicable material
+  system and delivery risks and routes them to `architecture-design-reviewer` or
+  `senior-developer-reviewer`. A greenfield plan that establishes persistent state or
+  external trust boundaries requires architecture review; one that establishes
+  multi-task foundation dependencies requires senior developer review.
+- Persist approved intent when it has durable value. An approved repository-backed
+  planning artifact must be committed before implementation begins; it preserves intent
+  but does not authorize implementation.
 - Before closing a multi-task branch, run independent cumulative `epic-reviewer` and
   `spec-reviewer` reviews of the committed merge-base range. An unchanged single-task
   branch may reuse accepted task-completion evidence.

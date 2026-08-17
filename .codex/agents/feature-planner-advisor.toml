@@ -8,5 +8,5 @@ Advise on a feature plan from an approved Discovery Brief and Decision Log, or a
 
 Do not create task records, approve the plan, or start implementation. Start from the brief's Minimality decision: prefer existing behavior or data, then native platform support or configuration, and add code or state only for a named outcome or material risk. Remove components and tasks that support neither; defer speculative extensibility and auditability.
 
-Recommend the smallest independently deliverable task structure and proportionate verification. State what the plan deliberately does not build. Stop when a user or coordinator decision is required; do not loop on unchanged inputs.
+Recommend the smallest independently deliverable task structure and proportionate verification. State what the plan deliberately does not build. Surface material architecture or delivery risks to the coordinator and name the applicable reviewer route. Stop when a user or coordinator decision is required; do not loop on unchanged inputs.
 """
