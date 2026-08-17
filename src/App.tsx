@@ -70,18 +70,23 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
   const onImport = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
-    void file.text().then((raw) => {
-      try {
-        const imported = importAppState(raw)
-        if (!window.confirm('Replace all current app data with this backup?')) return
-        commit(imported)
-        setMessage('Backup imported.')
-      } catch {
+    void file.text()
+      .then((raw) => {
+        try {
+          const imported = importAppState(raw)
+          if (!window.confirm('Replace all current app data with this backup?')) return
+          commit(imported)
+          setMessage('Backup imported.')
+        } catch {
+          setMessage('That file is not a valid V1 backup.')
+        }
+      })
+      .catch(() => {
         setMessage('That file is not a valid V1 backup.')
-      } finally {
+      })
+      .finally(() => {
         event.target.value = ''
-      }
-    })
+      })
   }
 
   return (

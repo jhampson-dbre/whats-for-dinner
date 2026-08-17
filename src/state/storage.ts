@@ -11,7 +11,7 @@ export type SaveResult = { saved: true } | { saved: false; error: Error }
 export function createEmptyAppState(): AppStateV1 {
   return {
     schemaVersion: 1,
-    household: { diners: [], restrictions: [], scheduleExceptions: [] },
+    household: { diners: [], hardRestrictions: [], scheduleExceptions: [] },
     meals: [],
     recipes: [],
     plans: [],

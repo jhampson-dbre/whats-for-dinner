@@ -26,7 +26,7 @@ describe('local app-state persistence', () => {
   it('saves and restores a complete V1 document', () => {
     const storage = storageWith()
     const state = createEmptyAppState()
-    state.meals.push({ id: 'meal-1', name: 'Tacos' })
+    state.meals.push({ id: 'meal-1', name: 'Tacos', active: true })
 
     expect(saveAppState(storage, state)).toEqual({ saved: true })
     expect(loadAppState(storage)).toEqual({ kind: 'ready', state })
