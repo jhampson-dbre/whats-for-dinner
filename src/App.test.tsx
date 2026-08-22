@@ -555,6 +555,21 @@ describe('weekly planning', () => {
     expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeEnabled()
   })
 
+  it('uses a meal recipeIds fallback after reload', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved', recipeIds: ['recipe'] })
+    state.recipes.push({ id: 'recipe', title: 'Tacos' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'tacos' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    const view = render(<App />)
+    expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeEnabled()
+    view.unmount(); render(<App />)
+    expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeEnabled()
+  })
+
   it('persists unavailable-shopping review using a meal-linked recipe fallback', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' })

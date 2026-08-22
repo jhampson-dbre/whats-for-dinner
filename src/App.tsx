@@ -84,7 +84,7 @@ function currentReviewSlots(state: AppStateV3): Set<string> {
   for (const plan of state.plans.filter((item) => item.confirmed)) for (const slot of plan.slots) {
     if (slot.dinnerReadyAt || !slot.mealId) continue
     const meal = state.meals.find((item) => item.id === slot.mealId)
-    const recipe = state.recipes.find((item) => item.id === slot.recipeId) ?? state.recipes.find((item) => item.mealId === meal?.id)
+    const recipe = state.recipes.find((item) => item.id === slot.recipeId) ?? state.recipes.find((item) => item.mealId === meal?.id) ?? state.recipes.find((item) => meal?.recipeIds?.includes(item.id))
     const associated = recipe ? recipe.mealId === meal?.id || meal?.recipeIds?.includes(recipe.id) : !meal?.recipeIds?.length && !state.recipes.some((item) => item.mealId === meal?.id)
     const efforts = correctedOutcomes(state.outcomes).filter((item) => item.mealId === meal?.id && item.recipeId === recipe?.id && !(item as { leftoverServing?: true }).leftoverServing && item.activeEffortMinutes !== undefined).map((item) => item.activeEffortMinutes!)
     const effort = efforts.length ? efforts.reduce((total, value) => total + value, 0) / efforts.length : recipe?.prepMinutes
