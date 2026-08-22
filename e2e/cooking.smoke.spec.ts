@@ -19,7 +19,7 @@ test('onboards, plans, shops, cooks, and records feedback', async ({ page }) => 
   await page.evaluate(() => {
     const key = 'whats-for-dinner.app-state'
     const state = JSON.parse(localStorage.getItem(key) ?? '{}')
-    state.plans[0].slots[0].feedbackEligibleAt = '2020-01-01T00:00:00.000Z'
+    state.plans[0].slots.find((slot: { dinnerReadyAt?: string }) => slot.dinnerReadyAt).feedbackEligibleAt = '2020-01-01T00:00:00.000Z'
     localStorage.setItem(key, JSON.stringify(state))
   })
   await page.reload()
