@@ -590,6 +590,7 @@ describe('shopping and repair', () => {
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').leftoverLots[0]).toMatchObject({ active: true })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').leftoverLots[0]).toMatchObject({ active: false })
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].repairRevisions).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
     expect(screen.queryByRole('button', { name: 'Use confirmed leftovers' })).not.toBeInTheDocument()
   })

@@ -183,10 +183,15 @@ describe('weekly plan', () => {
     expect(preview.slots[0].recipeId).toBe('z-first')
   })
 
+  it('uses effort evidence for the selected recipe version only', () => {
+    const state = { ...base, household: { ...base.household, scheduleExceptions: [{ date: '2026-08-17', constrained: true }] }, meals: [meal('a', { recipeIds: ['a-fast', 'a-slow'] }), meal('b')], recipes: [{ id: 'a-fast', prepMinutes: 10 }, { id: 'a-slow', prepMinutes: 40 }, { id: 'b-r', mealId: 'b', prepMinutes: 20 }], outcomes: [{ mealId: 'a', recipeId: 'a-slow', activeEffortMinutes: 60 }] }
+    expect(plan(buildWeeklyPlan(state, '2026-08-17')).slots[0]).toMatchObject({ mealId: 'a', recipeId: 'a-fast' })
+  })
+
   it('uses active effort, not cook or elapsed time, for constrained fit', () => {
     const constrained = { ...base, household: { ...base.household, scheduleExceptions: [{ date: '2026-08-17', constrained: true }] }, meals: [meal('crockpot'), meal('quick')], recipes: [{ id: 'crockpot-r', mealId: 'crockpot', prepMinutes: 30, cookMinutes: 600 }, { id: 'quick-r', mealId: 'quick', prepMinutes: 10 }] }
     expect(plan(buildWeeklyPlan(constrained, '2026-08-17')).slots[0].mealId).toBe('crockpot')
-    expect(plan(buildWeeklyPlan({ ...constrained, outcomes: [{ id: 'old', mealId: 'crockpot', activeEffortMinutes: 20 }, { id: 'fix', correctionOfOutcomeId: 'old', mealId: 'crockpot', activeEffortMinutes: 31 }] }, '2026-08-17')).slots[0].mealId).toBe('quick')
+    expect(plan(buildWeeklyPlan({ ...constrained, outcomes: [{ id: 'old', mealId: 'crockpot', recipeId: 'crockpot-r', activeEffortMinutes: 20 }, { id: 'fix', correctionOfOutcomeId: 'old', mealId: 'crockpot', recipeId: 'crockpot-r', activeEffortMinutes: 31 }] }, '2026-08-17')).slots[0].mealId).toBe('quick')
     expect(buildWeeklyPlan({ ...constrained, meals: [meal('crockpot'), meal('other')], recipes: [], outcomes: [{ id: 'elapsed', mealId: 'crockpot', cookingStartedAt: '2026-08-16T17:00:00.000Z', dinnerReadyAt: '2026-08-16T17:10:00.000Z' }] }, '2026-08-17')).toMatchObject({ kind: 'no-eligible' })
     expect(buildWeeklyPlan({ ...constrained, meals: [meal('unknown'), meal('other')], recipes: [{ id: 'unknown-r', mealId: 'unknown', cookMinutes: 1 }] }, '2026-08-17')).toMatchObject({ kind: 'no-eligible' })
     expect(buildWeeklyPlan({ ...constrained, meals: [meal('fractional'), meal('other')], outcomes: [{ mealId: 'fractional', activeEffortMinutes: 30 }, { mealId: 'fractional', activeEffortMinutes: 31 }] }, '2026-08-17')).toMatchObject({ kind: 'no-eligible' })

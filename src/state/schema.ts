@@ -155,6 +155,7 @@ const appStateSchema = (schemaVersion: 1 | 2 | 3, recipe = recipeSchema, plan = 
     if (value.planId && source && source.plan.id !== value.planId) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'planSlotId'], message: 'Plan slot must belong to plan.' })
     if (value.mealId && source && source.slot.mealId !== value.mealId) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'mealId'], message: 'Outcome meal must match plan slot.' })
     if (value.recipeId && source && source.slot.recipeId !== value.recipeId) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'recipeId'], message: 'Outcome recipe must match plan slot.' })
+    if ((value as { leftoverServing?: true }).leftoverServing && !source?.slot.leftoverFromSlotId && !source?.slot.leftoverLotIds?.length) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'leftoverServing'], message: 'Leftover serving must reference a leftover-consumer slot.' })
     if (value.correctionOfOutcomeId) {
       const prior = state.outcomes.slice(0, index).find((outcome) => outcome.id === value.correctionOfOutcomeId)
       requireReference(Boolean(prior), ['outcomes', index, 'correctionOfOutcomeId'], 'earlier outcome')

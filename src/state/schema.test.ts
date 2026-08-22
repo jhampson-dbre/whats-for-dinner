@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { createEmptyAppState, importAppState, loadAppState, APP_STATE_STORAGE_KEY } from './storage'
 
 describe('V1 state validation', () => {
+  it('rejects an explicit leftover-serving outcome outside a leftover consumer slot', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan-1', slots: [{ id: 'slot-1', date: '2026-08-17', mealId: 'meal-1' }] } as never)
+    state.outcomes.push({ id: 'outcome-1', planId: 'plan-1', planSlotId: 'slot-1', mealId: 'meal-1', leftoverServing: true } as never)
+
+    expect(() => importAppState(JSON.stringify(state))).toThrow('Leftover serving')
+  })
   it('rejects malformed required records', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'meal-1' } as never)

@@ -7,7 +7,7 @@ import {
   saveAppState,
   type LoadResult,
 } from './state/storage'
-import type { AppStateV3 } from './state/schema'
+import { appStateV3Schema, type AppStateV3 } from './state/schema'
 import { mealEligibility } from './domain/mealEligibility'
 import { buildWeeklyPlan } from './domain/weeklyPlan'
 import { buildGroceryList } from './domain/grocery'
@@ -127,6 +127,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
   const [repairSlotId, setRepairSlotId] = useState<string>()
 
   const commit = (next: AppStateV3) => {
+    if (!appStateV3Schema.safeParse(next).success) { setSaveStatus('unsaved'); setMessage('Changes are invalid and were not applied.'); return { saved: false as const, error: new Error('Invalid app state.') } }
     const result = saveAppState(localStorage, next)
     setSaveStatus(result.saved ? 'saved' : 'unsaved')
     setWeeklyPreview(undefined)
@@ -284,7 +285,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     const perishableRisk = targetMealRemoved && currentPlan?.shopping?.items.some((item) => item.availability === 'available' && item.perishable && item.mealIds.includes(repairTarget.mealId ?? ''))
     if (perishableRisk && !perishableAcknowledged) { setMessage('Acknowledge the confirmed perishable groceries before replacing this meal.'); return }
     if (!window.confirm('Apply this repair?')) return
-    update((current) => ({ ...current, plans: current.plans.map((plan) => plan.id !== repairPreview.plan.id ? plan : { ...repairPreview.plan, repairRevisions: [...(plan.repairRevisions ?? []), { id: crypto.randomUUID(), createdAt: new Date().toISOString(), slotId: repairPreview.choice.slotId, kind: repairPreview.choice.kind, ...(perishableRisk && { perishableDisposition: 'acknowledged-preservation-risk' as const }), ...(repairPreview.choice.leftoverLotId && { leftoverLotId: repairPreview.choice.leftoverLotId }), ...(repairPreview.choice.adaptationId && { adaptationId: repairPreview.choice.adaptationId }), ...(repairPreview.choice.reason && { reason: repairPreview.choice.reason }), ...(repairPreview.choice.takeoutContext && { takeoutContext: repairPreview.choice.takeoutContext }) }] }), leftoverLots: repairPreview.choice.leftoverLotId ? current.leftoverLots.map((lot) => lot.id === repairPreview.choice.leftoverLotId && lot.dinnerCoverage === 'one' ? { ...lot, active: false } : lot) : current.leftoverLots }))
+    update((current) => ({ ...current, plans: current.plans.map((plan) => plan.id !== repairPreview.plan.id ? plan : { ...repairPreview.plan, repairRevisions: [...(plan.repairRevisions ?? []), ...repairPreview.revisionDrafts.map((draft) => ({ id: crypto.randomUUID(), createdAt: new Date().toISOString(), slotId: draft.slotId, kind: draft.kind, ...(perishableRisk && { perishableDisposition: 'acknowledged-preservation-risk' as const }), ...(repairPreview.choice.leftoverLotId && { leftoverLotId: repairPreview.choice.leftoverLotId }), ...(repairPreview.choice.adaptationId && { adaptationId: repairPreview.choice.adaptationId }), ...(draft.kind === 'recovery' && repairPreview.choice.kind !== 'recovery' && { reason: 'replan' }), ...(repairPreview.choice.reason && { reason: repairPreview.choice.reason }), ...(repairPreview.choice.takeoutContext && { takeoutContext: repairPreview.choice.takeoutContext }) }))] }), leftoverLots: repairPreview.leftoverLots }))
     setRepairPreview(undefined); setRepairOpen(false); setMessage('Plan repair confirmed.')
   }
   const saveAdaptation = () => {
@@ -308,6 +309,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
   }
   const submitFeedback = () => {
     if (!feedbackPlan || !feedbackSlot) return
+    const prior = feedbackCorrectionId ? state.outcomes.find((outcome) => outcome.id === feedbackCorrectionId) as (typeof state.outcomes[number] & { leftoverServing?: true }) | undefined : undefined
     const feedback: { dinerId: string; acceptance: 'accepted' | 'rejected' | 'neutral'; neutralReason?: NeutralReason }[] = (feedbackSlot.expectedDinerIds ?? state.household.diners.filter((diner) => diner.active).map((diner) => diner.id)).map((dinerId) => {
       const diner = state.household.diners.find((item) => item.id === dinerId)
       if (!diner) return { dinerId, acceptance: 'neutral' }
@@ -317,7 +319,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     const revision = [...(feedbackPlan.repairRevisions ?? [])].reverse().find((item) => item.slotId === feedbackSlot.id)
     const effort = activeEffortMinutes === '' ? undefined : Number(activeEffortMinutes)
     const acceptance = householdAcceptance(feedback.map((item) => item.acceptance))
-    const outcome = { id: crypto.randomUUID(), planId: feedbackPlan.id, planSlotId: feedbackSlot.id, ...(feedbackSlot.mealId && { mealId: feedbackSlot.mealId }), ...(feedbackSlot.recipeId && { recipeId: feedbackSlot.recipeId }), ...(feedbackCorrectionId && { correctionOfOutcomeId: feedbackCorrectionId }), recordedAt: new Date().toISOString(), ...(!feedbackSlot.leftoverFromSlotId && feedbackSlot.cookingStartedAt && { cookingStartedAt: feedbackSlot.cookingStartedAt }), ...(!feedbackSlot.leftoverFromSlotId && feedbackSlot.dinnerReadyAt && { dinnerReadyAt: feedbackSlot.dinnerReadyAt }), ...(!feedbackSlot.leftoverFromSlotId && effort !== undefined && Number.isInteger(effort) && effort >= 0 && effort <= 10_080 && { activeEffortMinutes: effort }), acceptance, personFeedback: feedback, leftoverCoverage, recoveryClassification: classifyRecovery({ acceptance, repairKind: revision?.kind, takeoutContext: revision?.takeoutContext }) }
+    const outcome = { id: crypto.randomUUID(), planId: feedbackPlan.id, planSlotId: feedbackSlot.id, ...(feedbackSlot.mealId && { mealId: feedbackSlot.mealId }), ...(feedbackSlot.recipeId && { recipeId: feedbackSlot.recipeId }), ...(feedbackCorrectionId && { correctionOfOutcomeId: feedbackCorrectionId }), ...((feedbackSlot.leftoverFromSlotId || feedbackSlot.leftoverLotIds?.length || prior?.leftoverServing) && { leftoverServing: true as const }), recordedAt: new Date().toISOString(), ...(!feedbackSlot.leftoverFromSlotId && feedbackSlot.cookingStartedAt && { cookingStartedAt: feedbackSlot.cookingStartedAt }), ...(!feedbackSlot.leftoverFromSlotId && effort !== undefined && Number.isInteger(effort) && effort >= 0 && effort <= 10_080 && { activeEffortMinutes: effort }), acceptance, personFeedback: feedback, leftoverCoverage, recoveryClassification: classifyRecovery({ acceptance, repairKind: revision?.kind, takeoutContext: revision?.takeoutContext }) }
     const dependentIds = feedbackPlan.id === currentPlan?.id && leftoverCoverage !== 'one' && leftoverCoverage !== 'more-than-one' ? missingLeftoverDependencies(feedbackPlan, feedbackSlot.id) : []
     update((current) => ({ ...current, outcomes: [...current.outcomes, outcome], leftoverLots: [...current.leftoverLots.map((lot) => feedbackCorrectionId && lot.sourcePlanId === feedbackPlan.id && lot.sourceSlotId === feedbackSlot.id ? { ...lot, active: false } : lot), ...(leftoverCoverage === 'one' || leftoverCoverage === 'more-than-one') && current.leftoverLots.length < 500 ? [{ id: crypto.randomUUID(), sourcePlanId: feedbackPlan.id, sourceSlotId: feedbackSlot.id, ...(feedbackSlot.mealId && { sourceMealId: feedbackSlot.mealId }), dinnerCoverage: leftoverCoverage, active: true }] : []], plans: current.plans.map((plan) => plan.id !== feedbackPlan.id ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id === feedbackSlot.id ? { ...slot, feedbackDismissed: true } : slot) }) }))
     setFeedbackTarget(undefined); setFeedbackCorrectionId(undefined); setPersonFeedback({}); setLeftoverCoverage('none'); setActiveEffortMinutes('')
