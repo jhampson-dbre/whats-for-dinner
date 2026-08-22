@@ -97,7 +97,8 @@ function currentReviewSlots(state: AppStateV4): Set<string> {
     const efforts = correctedOutcomes(state.outcomes).filter((item) => item.mealId === meal?.id && item.recipeId === recipe?.id && !(item as { leftoverServing?: true }).leftoverServing && item.activeEffortMinutes !== undefined).map((item) => item.activeEffortMinutes!)
     const effort = efforts.length ? efforts.reduce((total, value) => total + value, 0) / efforts.length : recipe?.prepMinutes
     const capacity = effectiveCapacity(state, slot.date)
-    if (!meal?.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible || (!leftoverConsumer(slot) && (!associated || recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? []) || (capacity === 'hands-off' ? !(selectedRecipe && selectedRecipeAssociated && selectedRecipe.handsOffSlowCooker) : capacity === 'constrained' && (effort === undefined || effort > 30))))) affected.add(`${plan.id}:${slot.id}`)
+    const inactiveLeftoverLot = slot.leftoverLotIds?.some((lotId) => state.leftoverLots.some((lot) => lot.id === lotId && lot.active === false))
+    if (inactiveLeftoverLot || !meal?.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible || (!leftoverConsumer(slot) && (!associated || recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? []) || (capacity === 'hands-off' ? !(selectedRecipe && selectedRecipeAssociated && selectedRecipe.handsOffSlowCooker) : capacity === 'constrained' && (effort === undefined || effort > 30))))) affected.add(`${plan.id}:${slot.id}`)
   }
   return affected
 }

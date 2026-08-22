@@ -1352,6 +1352,21 @@ describe('cooking outcomes', () => {
     expect(outcome).not.toHaveProperty('dinnerReadyAt')
   })
 
+  it('keeps an actual-leftover dinner blocked after reload when its lot is inactive', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'soup', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'soup' }, { id: 'actual', date: '2026-08-19', mealId: 'soup', leftoverLotIds: ['lot'] }] } as never)
+    state.leftoverLots.push({ id: 'lot', sourcePlanId: 'plan', sourceSlotId: 'source', sourceMealId: 'soup', dinnerCoverage: 'one', active: false })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    const actualDinner = screen.getAllByRole('listitem').find((item) => item.textContent?.startsWith('2026-08-19: Soup'))!
+    expect(within(actualDinner).queryByRole('button', { name: 'Start cooking Soup' })).not.toBeInTheDocument()
+    expect(within(actualDinner).getByRole('button', { name: 'Dinner’s ready Soup' })).toBeDisabled()
+  })
+
   it('records ordinary elapsed time but neither effort nor leftovers for takeout', () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-08-19T18:00:00.000Z'))
     const state = createEmptyAppState()
