@@ -1405,7 +1405,7 @@ describe('cooking outcomes', () => {
   it('persists a completed cooking-source correction after deactivating its produced lot', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'chili', name: 'Chili', active: true }, { id: 'soup', name: 'Soup', active: true })
-    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-19', mealId: 'chili', cookingStartedAt: '2026-08-19T17:00:00.000Z', dinnerReadyAt: '2026-08-19T18:00:00.000Z' }, { id: 'dependent', date: '2026-08-20', mealId: 'chili', leftoverFromSlotId: 'source' }] } as never)
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-19', mealId: 'chili', cookingStartedAt: '2026-08-19T17:00:00.000Z', dinnerReadyAt: '2026-08-19T18:00:00.000Z' }, { id: 'dependent', date: '2026-08-20', mealId: 'chili', leftoverLotIds: ['produced'] }] } as never)
     state.leftoverLots.push({ id: 'produced', sourcePlanId: 'plan', sourceSlotId: 'source', sourceMealId: 'chili', dinnerCoverage: 'one', active: true })
     state.outcomes.push({ id: 'outcome', planId: 'plan', planSlotId: 'source', mealId: 'chili', cookingStartedAt: '2026-08-19T17:00:00.000Z', dinnerReadyAt: '2026-08-19T18:00:00.000Z', activeEffortMinutes: 25, leftoverCoverage: 'one' } as never)
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
@@ -1416,11 +1416,12 @@ describe('cooking outcomes', () => {
     fireEvent.change(screen.getByLabelText('Date to repair'), { target: { value: 'source' } })
     fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
     fireEvent.click(screen.getByRole('button', { name: 'Choose takeout' }))
+    expect(screen.getByText(/2026-08-20: Chili.*confirmed leftover lots: produced.*none/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
 
     const saved = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
     expect(saved.leftoverLots[0]).toMatchObject({ id: 'produced', active: false })
-    expect(saved.plans[0].slots.find((slot: { id: string }) => slot.id === 'dependent')).not.toHaveProperty('leftoverFromSlotId')
+    expect(saved.plans[0].slots.find((slot: { id: string }) => slot.id === 'dependent')).not.toHaveProperty('leftoverLotIds')
     expect(saved.outcomes).toEqual([expect.any(Object), expect.objectContaining({ correctionOfOutcomeId: 'outcome', planSlotId: 'source' })])
     expect(saved.outcomes[1]).not.toHaveProperty('mealId')
     expect(saved.outcomes[1]).not.toHaveProperty('cookingStartedAt')
@@ -1450,6 +1451,49 @@ describe('cooking outcomes', () => {
     expect(saved.outcomes[1]).not.toHaveProperty('mealId')
     expect(saved.outcomes[1]).not.toHaveProperty('cookingStartedAt')
     expect(saved.outcomes[1]).not.toHaveProperty('leftoverServing')
+  })
+
+  it('atomically replans an unfinished actual-leftover consumer in another plan', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'chili', name: 'Chili', active: false }, { id: 'soup', name: 'Soup', active: true, recipeIds: ['soup-recipe'] })
+    state.recipes.push({ id: 'soup-recipe', title: 'Soup', mealId: 'soup', ingredients: ['1 cup tomatoes'] })
+    state.plans.push({ id: 'source-plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-19', mealId: 'chili', cookingStartedAt: '2026-08-19T17:00:00.000Z', dinnerReadyAt: '2026-08-19T18:00:00.000Z' }] } as never, { id: 'consumer-plan', confirmed: true, slots: [{ id: 'consumer', date: '2026-08-20', mealId: 'chili', leftoverLotIds: ['produced'] }] } as never)
+    state.leftoverLots.push({ id: 'produced', sourcePlanId: 'source-plan', sourceSlotId: 'source', sourceMealId: 'chili', dinnerCoverage: 'one', active: true })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Plan to repair'), { target: { value: 'source-plan' } })
+    fireEvent.change(screen.getByLabelText('Date to repair'), { target: { value: 'source' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose takeout' }))
+    expect(screen.getByText(/2026-08-20: Chili.*confirmed leftover lots: produced.*none/)).toBeInTheDocument()
+    expect(screen.getByText(/Grocery changes: add.*tomatoes/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+
+    const saved = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    expect(saved.leftoverLots[0]).toMatchObject({ active: false })
+    expect(saved.plans.find((plan: { id: string }) => plan.id === 'consumer-plan').slots[0]).not.toHaveProperty('leftoverLotIds')
+    expect(saved.plans.find((plan: { id: string }) => plan.id === 'consumer-plan').repairRevisions).toEqual([expect.objectContaining({ slotId: 'consumer', kind: 'recovery', reason: 'replan' })])
+    expect(saved.plans.find((plan: { id: string }) => plan.id === 'consumer-plan').repairRevisions[0]).not.toHaveProperty('takeoutContext')
+    expect(saved.plans.find((plan: { id: string }) => plan.id === 'source-plan').repairRevisions).toEqual([expect.objectContaining({ slotId: 'source', kind: 'takeout', takeoutContext: 'planned' })])
+  })
+
+  it('corrects a completed planned-leftover target without changing source cooking history', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'soup', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-18', mealId: 'soup', cookingStartedAt: '2026-08-18T17:00:00.000Z', dinnerReadyAt: '2026-08-18T18:00:00.000Z' }, { id: 'target', date: '2026-08-19', mealId: 'soup', leftoverFromSlotId: 'source', dinnerReadyAt: '2026-08-19T18:00:00.000Z' }] } as never)
+    state.outcomes.push({ id: 'outcome', planId: 'plan', planSlotId: 'target', mealId: 'soup', dinnerReadyAt: '2026-08-19T18:00:00.000Z', leftoverServing: true } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state)); vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Plan to repair'), { target: { value: 'plan' } }); fireEvent.change(screen.getByLabelText('Date to repair'), { target: { value: 'target' } }); fireEvent.click(screen.getByRole('button', { name: 'Plans changed' })); fireEvent.click(screen.getByRole('button', { name: 'Choose takeout' })); fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+
+    const saved = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    expect(saved.plans[0].slots[0]).toMatchObject({ cookingStartedAt: '2026-08-18T17:00:00.000Z', mealId: 'soup' })
+    expect(saved.outcomes[1]).toMatchObject({ correctionOfOutcomeId: 'outcome' })
+    expect(saved.outcomes[1]).not.toHaveProperty('leftoverServing')
+    expect(saved.outcomes[1]).not.toHaveProperty('cookingStartedAt')
   })
 
   it('hides recipe-less and same-recipe simpler adaptations', () => {
