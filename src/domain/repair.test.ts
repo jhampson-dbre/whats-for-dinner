@@ -104,12 +104,14 @@ describe('repair', () => {
 
   it('replans an unfinished actual-leftover consumer in another plan', () => {
     const source = { ...plan, slots: [{ ...plan.slots[0] }, { ...plan.slots[1], cookingStartedAt: '2026-08-18T17:00:00.000Z', dinnerReadyAt: '2026-08-18T18:00:00.000Z' }, { ...plan.slots[2], mealId: 'soup' }] }
-    const other = { id: 'other', confirmed: true, slots: [{ id: 'other-dependent', date: '2026-08-20', mealId: 'soup', leftoverLotIds: ['produced'] }] }
+    const other = { id: 'other', confirmed: true, slots: [{ id: 'other-dependent', date: '2026-08-20', mealId: 'soup', leftoverLotIds: ['produced'] }], shopping: { items: [{ id: 'perishable', perishable: true, availability: 'available', mealIds: ['soup'], sourceLines: ['1 bunch herbs'], sourceSlotIds: ['other-dependent'] }, { id: 'legacy', perishable: true, availability: 'available', mealIds: ['soup'], sourceLines: ['1 lemon'] }, { id: 'unrelated', perishable: true, availability: 'available', mealIds: ['soup'], sourceLines: ['1 onion'], sourceSlotIds: ['unrelated'] }] } }
     const repair = previewRepair({ ...state(source), plans: [source, other], leftoverLots: [{ id: 'produced', sourcePlanId: 'plan', sourceSlotId: 'target', sourceMealId: 'tacos', active: true }] }, source, { slotId: 'target', kind: 'takeout' })
 
     expect(repair.plan.slots.find((slot) => slot.id === 'future')).toMatchObject({ mealId: 'soup' })
     expect(repair.plans.find((candidate) => candidate.id === 'other')?.slots[0]).toMatchObject({ leftoverLotIds: undefined })
     expect(repair.revisionDrafts).toEqual(expect.arrayContaining([expect.objectContaining({ planId: 'other', slotId: 'other-dependent', kind: 'recovery' })]))
+    expect(repair.perishableRisks).toEqual(expect.arrayContaining([expect.objectContaining({ itemId: 'perishable', sourceSlotId: 'other-dependent', sourceLine: '1 bunch herbs' }), expect.objectContaining({ itemId: 'legacy', sourceLine: '1 lemon' })]))
+    expect(repair.perishableRisks).toHaveLength(2)
   })
 
   it('leaves every plan, lot, and outcome unchanged when an actual-leftover consumer cannot be replanned', () => {

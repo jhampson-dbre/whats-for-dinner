@@ -221,10 +221,14 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
     repairedPlans.push({ ...candidatePlan, slots: nextSlots })
   }
   if (request.action.kind === 'swap' && !slots.filter((slot) => slot.id === target.id || slot.date === (request.action as Extract<RepairAction, { kind: 'swap' }>).otherDate).every((slot) => !slot.mealId || slot.leftoverFromSlotId || slot.leftoverLotIds?.length || fitsCookingCapacity(state, state.meals.find((meal) => meal.id === slot.mealId)!, state.recipes.find((recipe) => recipe.id === slot.recipeId) ?? recipeFor(state.meals.find((meal) => meal.id === slot.mealId)!, state.recipes), slot.date))) return { kind: 'invalid-target', nextStep: 'Both swapped meals must fit their dates.' }
-  const perishableRisks = plan.shopping?.items.flatMap((item) => item.perishable && item.availability === 'available' && target.mealId && item.mealIds.includes(target.mealId) ? item.sourceLines.map((sourceLine, index) => ({ itemId: item.id, sourceSlotId: item.sourceSlotIds?.[index], sourceLine })) : []) ?? []
   const changedSlotIds = repairedPlans.flatMap((candidatePlan) => candidatePlan.slots.filter((slot, index) => JSON.stringify(slot) !== JSON.stringify(repairState.plans.find((item) => item.id === candidatePlan.id)!.slots[index])).map((slot) => slot.id))
   const replannedSlotIds = new Set(closure.map((slot) => slot.id))
   const revisionDrafts = repairedPlans.flatMap((candidatePlan) => candidatePlan.slots.filter((slot, index) => JSON.stringify(slot) !== JSON.stringify(repairState.plans.find((item) => item.id === candidatePlan.id)!.slots[index])).map((slot) => ({ planId: candidatePlan.id, slotId: slot.id, kind: candidatePlan.id !== plan.id || (slot.id !== target.id && replannedSlotIds.has(slot.id)) ? 'replan' as const : request.action.kind })))
+  const perishableRisks = revisionDrafts.flatMap((draft) => {
+    const candidatePlan = repairState.plans.find((item) => item.id === draft.planId)!
+    const priorSlot = candidatePlan.slots.find((slot) => slot.id === draft.slotId)
+    return candidatePlan.shopping?.items.flatMap((item) => item.perishable && item.availability === 'available' && (item.sourceSlotIds?.includes(draft.slotId) || (!item.sourceSlotIds && priorSlot?.mealId && item.mealIds.includes(priorSlot.mealId))) ? item.sourceLines.flatMap((sourceLine, index) => !item.sourceSlotIds || item.sourceSlotIds[index] === draft.slotId ? [{ itemId: item.id, sourceSlotId: item.sourceSlotIds?.[index], sourceLine }] : []) : []) ?? []
+  })
   return { kind: 'repair', plan: repairedPlans[0], plans: repairedPlans, leftoverLots: repairState.leftoverLots.map((lot) => consumedLotIds.includes(lot.id) || deactivatedLotIds.includes(lot.id) ? { ...lot, active: false } : releasedLotIds.includes(lot.id) ? { ...lot, active: true } : lot), changedSlotIds, revisionDrafts, releasedLotIds, consumedLotIds, perishableRisks }
 }
 
