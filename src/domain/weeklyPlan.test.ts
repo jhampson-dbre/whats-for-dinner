@@ -11,6 +11,11 @@ const plan = (preview: WeeklyPlan) => {
 const cookingIds = (preview: ReturnType<typeof plan>) => preview.slots.filter((slot) => slot.leftoverFrom === undefined).map((slot) => slot.mealId)
 
 describe('weekly plan', () => {
+  it('does not block planning on a restriction scoped to an inactive diner', () => {
+    const state = { ...base, household: { ...base.household, diners: [{ id: 'ava', active: false }], hardRestrictions: [{ id: 'peanuts', dinerId: 'ava' }] }, meals: [meal('a', { safetyReview: 'unknown' }), meal('b', { safetyReview: 'unknown' })] }
+    expect(buildWeeklyPlan(state, '2026-08-17')).toMatchObject({ kind: 'plan' })
+  })
+
   it('gives a later hands-off record precedence over an earlier constrained record', () => {
     expect(effectiveCapacity({ ...base, meals: [], household: { ...base.household, scheduleExceptions: [{ date: '2026-08-17', constrained: true }, { date: '2026-08-17', handsOff: true }] } }, '2026-08-17')).toBe('hands-off')
   })

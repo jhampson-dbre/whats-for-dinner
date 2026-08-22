@@ -98,7 +98,7 @@ function currentReviewSlots(state: AppStateV4): Set<string> {
     const effort = efforts.length ? efforts.reduce((total, value) => total + value, 0) / efforts.length : recipe?.prepMinutes
     const capacity = effectiveCapacity(state, slot.date)
     const inactiveLeftoverLot = slot.leftoverLotIds?.some((lotId) => state.leftoverLots.some((lot) => lot.id === lotId && lot.active === false))
-    if (inactiveLeftoverLot || !meal?.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible || (!leftoverConsumer(slot) && (!associated || recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? []) || (capacity === 'hands-off' ? !(selectedRecipe && selectedRecipeAssociated && selectedRecipe.handsOffSlowCooker) : capacity === 'constrained' && (effort === undefined || effort > 30))))) affected.add(`${plan.id}:${slot.id}`)
+    if (inactiveLeftoverLot || !meal?.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, diners: state.household.diners, safetyReview: meal.safetyReview }).eligible || (!leftoverConsumer(slot) && (!associated || recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? []) || (capacity === 'hands-off' ? !(selectedRecipe && selectedRecipeAssociated && selectedRecipe.handsOffSlowCooker) : capacity === 'constrained' && (effort === undefined || effort > 30))))) affected.add(`${plan.id}:${slot.id}`)
   }
   return affected
 }
@@ -467,13 +467,13 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
           <label>Diner name<input maxLength={160} value={dinerName} onChange={(event) => setDinerName(event.target.value)} /></label>
           <button disabled={state.household.diners.length >= 20}>Add diner</button>
         </form>
-        {state.household.diners.length > 0 && <ul>{state.household.diners.map((diner) => <li key={diner.id}>{diner.name}</li>)}</ul>}
+        {state.household.diners.length > 0 && <ul>{state.household.diners.map((diner) => <li key={diner.id}>{diner.name}<label>Diner name {diner.name}<input aria-label={`Diner name ${diner.name}`} maxLength={160} value={diner.name} onChange={(event) => update((current) => ({ ...current, household: { ...current.household, diners: current.household.diners.map((item) => item.id === diner.id ? { ...item, name: event.target.value } : item) } }))} /></label><label><input aria-label={`Active ${diner.name}`} type="checkbox" checked={diner.active} onChange={(event) => update((current) => ({ ...current, household: { ...current.household, diners: current.household.diners.map((item) => item.id === diner.id ? { ...item, active: event.target.checked } : item) }, ...(event.target.checked && !diner.active ? { meals: current.meals.map((meal) => ({ ...meal, safetyReview: 'unknown' })) } : {}) }))} /> Active</label></li>)}</ul>}
         <form className="actions" onSubmit={(event) => { event.preventDefault(); addRestriction() }}>
           <label>Hard restriction<input maxLength={160} value={restriction} onChange={(event) => setRestriction(event.target.value)} /></label>
           <label>Applies to<select value={restrictionDinerId} onChange={(event) => setRestrictionDinerId(event.target.value)}><option value="">Everyone</option>{state.household.diners.map((diner) => <option key={diner.id} value={diner.id}>{diner.name}</option>)}</select></label>
           <button disabled={state.household.hardRestrictions.length >= 50}>Add restriction</button>
         </form>
-        {state.household.hardRestrictions.length > 0 && <ul>{state.household.hardRestrictions.map((item) => <li key={item.id}>{item.label}{item.dinerId && ` — ${state.household.diners.find((diner) => diner.id === item.dinerId)?.name}`}</li>)}</ul>}
+        {state.household.hardRestrictions.length > 0 && <ul>{state.household.hardRestrictions.map((item) => <li key={item.id}>{item.label}{item.dinerId && ` — ${state.household.diners.find((diner) => diner.id === item.dinerId)?.name}`} <button aria-label={`Remove restriction ${item.label}`} onClick={() => update((current) => ({ ...current, household: { ...current.household, hardRestrictions: current.household.hardRestrictions.filter((restriction) => restriction.id !== item.id) }, meals: current.meals.map((meal) => ({ ...meal, safetyReview: 'unknown' })) }))}>Remove</button></li>)}</ul>}
         <form className="actions" onSubmit={(event) => { event.preventDefault(); addException() }}>
           <label>Exception date<input type="date" value={exceptionDate} onChange={(event) => setExceptionDate(event.target.value)} /></label>
           <label>Exception note<input maxLength={500} value={exceptionNote} onChange={(event) => setExceptionNote(event.target.value)} /></label>
@@ -556,7 +556,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
         <ul className="meal-list">
           {state.meals.map((meal) => {
             const recipes = state.recipes.filter((recipe) => recipe.mealId === meal.id || meal.recipeIds?.includes(recipe.id))
-            const eligibility = mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview })
+            const eligibility = mealEligibility({ hardRestrictions: state.household.hardRestrictions, diners: state.household.diners, safetyReview: meal.safetyReview })
             return <li key={meal.id}>
               <label>Meal name {meal.name}<input maxLength={160} value={meal.name} onChange={(event) => { if (event.target.value.trim() && event.target.value.length <= 160) update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, name: event.target.value } : currentMeal) })) }} /></label>
               <label><input aria-label={`Active ${meal.name}`} type="checkbox" checked={meal.active} onChange={(event) => update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, active: event.target.checked } : currentMeal) }))} /> Active</label>

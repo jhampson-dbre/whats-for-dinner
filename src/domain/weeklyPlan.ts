@@ -9,7 +9,7 @@ type Adaptation = { id: string; recipeId?: string; solvesIssue?: true; coordinat
 type Meal = { id: string; name: string; active: boolean; provisional?: boolean; plannedLeftoverDinner?: boolean; safetyReview?: 'unknown' | 'approved' | 'rejected'; adaptations?: Adaptation[]; recipeIds?: string[] }
 type Recipe = { id: string; title?: string; mealId?: string; prepMinutes?: number; cookMinutes?: number; ingredients?: string[]; handsOffSlowCooker?: boolean }
 type Outcome = { id?: string; mealId?: string; recipeId?: string; planSlotId?: string; correctionOfOutcomeId?: string; acceptance?: 'accepted' | 'rejected' | 'neutral' | 'unknown'; cookingStartedAt?: string; dinnerReadyAt?: string; activeEffortMinutes?: number; leftoverServing?: true }
-type PlannerState = { household: { hardRestrictions: { id: string }[]; scheduleExceptions: { id?: string; date: string; constrained?: boolean; handsOff?: boolean }[] }; meals: Meal[]; recipes: Recipe[]; outcomes: Outcome[] }
+type PlannerState = { household: { diners?: { id: string; active: boolean }[]; hardRestrictions: { id: string; dinerId?: string }[]; scheduleExceptions: { id?: string; date: string; constrained?: boolean; handsOff?: boolean }[] }; meals: Meal[]; recipes: Recipe[]; outcomes: Outcome[] }
 
 type PlanSlot = { date: string; mealId: string; recipeId?: string; leftoverFrom?: number; kind?: 'cook' | 'leftover' | 'takeout'; score: number; confidence: 'Estimated' | 'Learning' | 'Established'; reasons: string[] }
 type OptionalAction = 'fallback' | 'use' | 'adapt' | 'reject'
@@ -66,7 +66,7 @@ function initialPlan(state: PlannerState, startDate: string, optionalAction: Opt
   const outcomes = correctedOutcomes(state.outcomes)
   const excluded: Excluded[] = state.meals.flatMap((meal) => {
     if (!meal.active) return [{ mealId: meal.id, reason: 'Meal is inactive.' }]
-    const eligibility = mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview })
+    const eligibility = mealEligibility({ hardRestrictions: state.household.hardRestrictions, diners: state.household.diners, safetyReview: meal.safetyReview })
     return eligibility.eligible ? [] : [{ mealId: meal.id, reason: eligibility.reason }]
   })
   const eligible = state.meals.filter((meal) => !excluded.some((item) => item.mealId === meal.id))
@@ -167,7 +167,7 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
   const slots = plan.slots.map((slot) => ({ ...slot }))
   const changed = new Set<string>()
   const replace = (next: Partial<typeof target>) => { Object.assign(slots.find((slot) => slot.id === target.id)!, next); changed.add(target.id) }
-  const validRecipe = (meal: Meal | undefined, recipe: Recipe | undefined, date: string) => Boolean(meal?.active && (!recipe ? !meal.recipeIds?.length && !state.recipes.some((item) => item.mealId === meal.id) : (recipe.mealId === meal.id || meal.recipeIds?.includes(recipe.id)) && !recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? [])) && mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible && fitsCookingCapacity(state, meal, recipe, date))
+  const validRecipe = (meal: Meal | undefined, recipe: Recipe | undefined, date: string) => Boolean(meal?.active && (!recipe ? !meal.recipeIds?.length && !state.recipes.some((item) => item.mealId === meal.id) : (recipe.mealId === meal.id || meal.recipeIds?.includes(recipe.id)) && !recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? [])) && mealEligibility({ hardRestrictions: state.household.hardRestrictions, diners: state.household.diners, safetyReview: meal.safetyReview }).eligible && fitsCookingCapacity(state, meal, recipe, date))
   const releasedLotIds = target.leftoverLotIds ?? []
   const deactivatedLotIds = request.action.kind === 'takeout' ? repairState.leftoverLots.filter((lot) => sourceLotIds.has(lot.id) && lot.active !== false).map((lot) => lot.id) : []
   let consumedLotIds: string[] = []
@@ -192,7 +192,7 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
     const lot = repairState.leftoverLots.find((item) => item.id === (request.action as Extract<RepairAction, { kind: 'leftovers' }>).leftoverLotId && item.active !== false)
     if (!lot || repairState.plans.some((candidate) => candidate.slots.some((slot) => slot.id !== target.id && slot.leftoverLotIds?.includes(lot.id)))) return { kind: 'invalid-target', nextStep: 'Choose an available leftover lot.' }
     const sourceMeal = repairState.meals.find((meal) => meal.id === lot.sourceMealId)
-    if (!sourceMeal?.active || !mealEligibility({ hardRestrictions: repairState.household.hardRestrictions, safetyReview: sourceMeal.safetyReview }).eligible) return { kind: 'invalid-target', nextStep: 'Choose an eligible leftover source.' }
+    if (!sourceMeal?.active || !mealEligibility({ hardRestrictions: repairState.household.hardRestrictions, diners: repairState.household.diners, safetyReview: sourceMeal.safetyReview }).eligible) return { kind: 'invalid-target', nextStep: 'Choose an eligible leftover source.' }
     consumedLotIds = [lot.id]
     replace({ mealId: sourceMeal.id, recipeId: undefined, leftoverFromSlotId: undefined, leftoverLotIds: [lot.id] })
   } else if (request.action.kind === 'swap') {
@@ -208,7 +208,7 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
   const dependents = plan.slots.filter((slot) => !slot.dinnerReadyAt && (slot.leftoverFromSlotId === target.id || slot.leftoverLotIds?.some((lotId) => sourceLotIds.has(lotId))))
   const closure = request.action.kind === 'replan' ? [target, ...dependents] : dependents
   const candidateFor = (candidatePlan: typeof plan, date: string) => state.meals.find((meal) => {
-    if (!meal.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible) return false
+    if (!meal.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, diners: state.household.diners, safetyReview: meal.safetyReview }).eligible) return false
     const recipe = recipeFor(meal, state.recipes)
     if (recipeUsesUnavailableIngredient(recipe, candidatePlan.shopping?.items ?? [])) return false
     return fitsCookingCapacity(state, meal, recipe, date)

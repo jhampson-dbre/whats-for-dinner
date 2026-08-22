@@ -134,6 +134,36 @@ describe('household onboarding and meal library', () => {
     vi.restoreAllMocks()
   })
 
+  it('keeps inactive diner restrictions without constraining plans, then restores conservative review after reactivation', () => {
+    const state = createEmptyAppState()
+    state.household.diners.push({ id: 'ava', name: 'Ava', active: true })
+    state.household.hardRestrictions.push({ id: 'peanuts', label: 'Peanuts', dinerId: 'ava' })
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'history', date: '2026-08-16', mealId: 'tacos', cookingStartedAt: '2026-08-16T17:00:00.000Z', dinnerReadyAt: '2026-08-16T17:25:00.000Z', feedbackEligibleAt: '2020-01-01T00:00:00.000Z', expectedDinerIds: ['ava'] }, { id: 'slot', date: '2026-08-17', mealId: 'tacos' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    const view = render(<App />)
+    fireEvent.change(screen.getByLabelText('Diner name Ava'), { target: { value: 'Avery' } })
+    fireEvent.click(screen.getByLabelText('Active Avery'))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[0].expectedDinerIds).toEqual(['ava'])
+    fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
+    expect(screen.getByLabelText('Feedback for Avery')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeEnabled()
+    view.unmount(); const reloaded = render(<App />)
+    expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeEnabled()
+    fireEvent.click(screen.getByLabelText('Active Avery'))
+
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').meals).toEqual([expect.objectContaining({ safetyReview: 'unknown' })])
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeDisabled()
+    reloaded.unmount(); const restored = render(<App />)
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove restriction Peanuts' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').household.hardRestrictions).toEqual([])
+    restored.unmount(); render(<App />)
+    expect(screen.queryByRole('button', { name: 'Remove restriction Peanuts' })).not.toBeInTheDocument()
+  })
+
   it('onboards a diner, a diner restriction, and a schedule exception', () => {
     render(<App />)
 
