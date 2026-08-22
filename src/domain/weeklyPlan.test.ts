@@ -99,6 +99,12 @@ describe('weekly plan', () => {
     if (preview.kind === 'repair') expect(preview.plan.slots[0]).not.toHaveProperty('cookingStartedAt')
   })
 
+  it('rejects automatic replanning of an unfinished takeout slot', () => {
+    const state = { ...base, meals: [meal('available')], plans: [{ id: 'plan', slots: [{ id: 'takeout', date: '2026-08-17' }] }], leftoverLots: [] }
+
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'replan' } })).toMatchObject({ kind: 'invalid-target' })
+  })
+
   it('reports immutable perishable contribution evidence', () => {
     const state = { ...base, meals: [meal('a'), meal('b')], plans: [{ id: 'plan', slots: [{ id: 'target', date: '2026-08-17', mealId: 'a' }], shopping: { items: [{ id: 'milk', availability: 'available', perishable: true, mealIds: ['a'], sourceLines: ['1 cup milk'], sourceSlotIds: ['target'] }] } }], leftoverLots: [] }
     const before = JSON.stringify(state.plans[0].shopping)

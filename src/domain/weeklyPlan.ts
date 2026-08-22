@@ -189,7 +189,11 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
     if (!other || other.dinnerReadyAt || target.leftoverFromSlotId || other.leftoverFromSlotId || plan.slots.some((slot) => slot.leftoverFromSlotId === other.id && !slot.dinnerReadyAt)) return { kind: 'invalid-target', nextStep: 'Choose another unfinished unlinked slot.' }
     const original = { mealId: target.mealId, recipeId: target.recipeId }
     replace({ mealId: other.mealId, recipeId: other.recipeId }); Object.assign(other, original); changed.add(other.id)
-  } else if (request.action.kind === 'replan') replace({ recipeId: recipeFor(state.meals.find((meal) => meal.id === target.mealId)!, state.recipes)?.id })
+  } else if (request.action.kind === 'replan') {
+    const meal = state.meals.find((item) => item.id === target.mealId)
+    if (!meal) return { kind: 'invalid-target', nextStep: 'Choose a meal to replan.' }
+    replace({ recipeId: recipeFor(meal, state.recipes)?.id })
+  }
   const dependents = plan.slots.filter((slot) => !slot.dinnerReadyAt && (slot.leftoverFromSlotId === target.id || slot.leftoverLotIds?.some((lotId) => sourceLotIds.has(lotId))))
   const closure = request.action.kind === 'replan' ? [target, ...dependents] : dependents
   const candidateFor = (candidatePlan: typeof plan, date: string) => state.meals.find((meal) => {

@@ -1586,6 +1586,20 @@ describe('cooking outcomes', () => {
     expect(screen.getByRole('button', { name: 'Confirm weekly plan' })).toBeInTheDocument()
   })
 
+  it('does not offer automatic replan for an unfinished planned-takeout slot', () => {
+    const state = createEmptyAppState()
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'takeout', date: '2026-08-17' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Plan to repair'), { target: { value: 'plan' } })
+    fireEvent.change(screen.getByLabelText('Date to repair'), { target: { value: 'takeout' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
+
+    expect(screen.queryByRole('button', { name: 'Replan with eligible meal' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Choose takeout' })).toBeInTheDocument()
+  })
+
   it('handles a hands-off plan through replan, completion, and completed takeout correction', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'slow', name: 'Slow stew', active: true, safetyReview: 'approved', recipeIds: ['slow-r'] }, { id: 'other', name: 'Other dinner', active: true, safetyReview: 'approved' })
