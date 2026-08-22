@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
 import recipeFixture from './import/recipeKeeper.fixture.html?raw'
@@ -192,6 +192,23 @@ describe('household onboarding and meal library', () => {
     render(<App />)
     expect(screen.getByText('Recipe: Weeknight soup')).toBeInTheDocument()
     expect(screen.getByText('1 linked recipe. Grocery ingredients are incomplete.')).toBeInTheDocument()
+  })
+
+  it('shows ingredient lines for linked recipes without inventing missing ingredients', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Soup', active: true, recipeIds: ['recipe-1', 'recipe-2'] })
+    state.recipes.push(
+      { id: 'recipe-1', title: 'Weeknight soup', mealId: 'meal-1', ingredients: ['1 onion', '2 cups broth'] },
+      { id: 'recipe-2', title: 'Mystery soup', mealId: 'meal-1' },
+    )
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+
+    expect(within(screen.getByRole('region', { name: 'Ingredients for Weeknight soup' })).getAllByRole('listitem')).toHaveLength(2)
+    expect(screen.getByText('1 onion')).toBeInTheDocument()
+    expect(screen.getByText('2 cups broth')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Ingredients for Mystery soup' })).not.toBeInTheDocument()
   })
 
   it('resets imported meal approvals when imported restrictions differ', async () => {
