@@ -88,7 +88,7 @@ function currentReviewSlots(state: AppStateV3): Set<string> {
     const associated = recipe ? recipe.mealId === meal?.id || meal?.recipeIds?.includes(recipe.id) : !meal?.recipeIds?.length && !state.recipes.some((item) => item.mealId === meal?.id)
     const efforts = correctedOutcomes(state.outcomes).filter((item) => item.mealId === meal?.id && item.recipeId === recipe?.id && !(item as { leftoverServing?: true }).leftoverServing && item.activeEffortMinutes !== undefined).map((item) => item.activeEffortMinutes!)
     const effort = efforts.length ? efforts.reduce((total, value) => total + value, 0) / efforts.length : recipe?.prepMinutes
-    if (!meal?.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible || !associated || recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? []) || (state.household.scheduleExceptions.some((item) => item.date === slot.date && item.constrained) && (effort === undefined || effort > 30))) affected.add(`${plan.id}:${slot.id}`)
+    if (!meal?.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible || (!leftoverConsumer(slot) && (!associated || recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? []) || (state.household.scheduleExceptions.some((item) => item.date === slot.date && item.constrained) && (effort === undefined || effort > 30))))) affected.add(`${plan.id}:${slot.id}`)
   }
   return affected
 }

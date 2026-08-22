@@ -585,6 +585,45 @@ describe('weekly planning', () => {
     expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeDisabled()
   })
 
+  it('keeps a slow planned-leftover target ready-capable on a constrained night after reload', () => {
+    const state = createEmptyAppState()
+    state.household.scheduleExceptions.push({ id: 'late', date: '2026-08-18', constrained: true })
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' })
+    state.recipes.push({ id: 'recipe', title: 'Tacos', mealId: 'tacos', prepMinutes: 31 })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'tacos', recipeId: 'recipe' }, { id: 'target', date: '2026-08-18', mealId: 'tacos', recipeId: 'recipe', leftoverFromSlotId: 'source' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    const view = render(<App />)
+    expect(screen.getAllByRole('button', { name: 'Dinner’s ready Tacos' })[1]).toBeEnabled()
+    view.unmount(); render(<App />)
+    expect(screen.getAllByRole('button', { name: 'Dinner’s ready Tacos' })[1]).toBeEnabled()
+  })
+
+  it('keeps a planned-leftover target ready-capable when its source ingredient is unavailable', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' })
+    state.recipes.push({ id: 'recipe', title: 'Tacos', mealId: 'tacos', ingredients: ['1 cup tomatoes'] })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'tacos', recipeId: 'recipe' }, { id: 'target', date: '2026-08-18', mealId: 'tacos', recipeId: 'recipe', leftoverFromSlotId: 'source' }], shopping: { confirmedAt: '2026-08-17T12:00:00.000Z', partial: false, skippedIncompleteMealIds: [], items: [{ label: '1 cup tomatoes', sourceLines: ['1 cup tomatoes'], mealIds: ['tacos'], perishable: false, availability: 'unavailable' }] } } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    const view = render(<App />)
+    expect(screen.getAllByRole('button', { name: 'Dinner’s ready Tacos' })[1]).toBeEnabled()
+    view.unmount(); render(<App />)
+    expect(screen.getAllByRole('button', { name: 'Dinner’s ready Tacos' })[1]).toBeEnabled()
+  })
+
+  it('continues to block a planned-leftover target when its meal is unsafe', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'rejected' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'tacos' }, { id: 'target', date: '2026-08-18', mealId: 'tacos', leftoverFromSlotId: 'source' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    const view = render(<App />)
+    expect(screen.getAllByRole('button', { name: 'Dinner’s ready Tacos' })[1]).toBeDisabled()
+    view.unmount(); render(<App />)
+    expect(screen.getAllByRole('button', { name: 'Dinner’s ready Tacos' })[1]).toBeDisabled()
+  })
+
   it.each([
     ['unforeseeable-disruption', 'accepted', 'successful'],
     ['predictable-planning-or-acceptance-failure', 'accepted', 'unsuccessful'],
