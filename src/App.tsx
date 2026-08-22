@@ -7,7 +7,7 @@ import {
   saveAppState,
   type LoadResult,
 } from './state/storage'
-import type { AppStateV1 } from './state/schema'
+import type { AppStateV2 } from './state/schema'
 import { mealEligibility } from './domain/mealEligibility'
 import { buildWeeklyPlan } from './domain/weeklyPlan'
 import { buildGroceryList } from './domain/grocery'
@@ -16,20 +16,20 @@ import { classifyRecovery, correctedOutcomes, householdAcceptance, type NeutralR
 import { readRecipeKeeperZip, type RecipeKeeperCandidate } from './import/recipeKeeper'
 import './app.css'
 
-type Action = { type: 'replace'; state: AppStateV1 }
+type Action = { type: 'replace'; state: AppStateV2 }
 type FeedbackChoice = 'accepted' | 'rejected' | NeutralReason
 
-function reducer(_state: AppStateV1, action: Action): AppStateV1 {
+function reducer(_state: AppStateV2, action: Action): AppStateV2 {
   return action.state
 }
 
-function eligibleFeedbackSlot(state: AppStateV1): { planId: string; slotId: string } | undefined {
+function eligibleFeedbackSlot(state: AppStateV2): { planId: string; slotId: string } | undefined {
   const now = new Date().toISOString()
   const found = [...state.plans].reverse().flatMap((plan) => plan.slots.map((slot) => ({ plan, slot }))).find(({ plan, slot }) => Boolean(slot.dinnerReadyAt && slot.feedbackEligibleAt && slot.feedbackEligibleAt <= now && !slot.feedbackDismissed && !state.outcomes.some((outcome) => outcome.planId === plan.id && outcome.planSlotId === slot.id)))
   return found ? { planId: found.plan.id, slotId: found.slot.id } : undefined
 }
 
-function shoppingControls(state: AppStateV1) {
+function shoppingControls(state: AppStateV2) {
   const shopping = [...state.plans].reverse().find((plan) => plan.confirmed)?.shopping
   const groceries = shopping ? buildGroceryList(state).items : []
   const itemId = (item: NonNullable<typeof shopping>['items'][number]) => item.id ?? groceries.find((candidate) => candidate.label === item.label && candidate.sourceLines.join('\n') === item.sourceLines.join('\n') && candidate.mealIds.join('\n') === item.mealIds.join('\n'))?.id
@@ -37,7 +37,7 @@ function shoppingControls(state: AppStateV1) {
   return { unavailable: itemIds((item) => item.availability === 'unavailable'), skipped: itemIds((item) => item.availability === 'skipped'), perishable: itemIds((item) => item.perishable), skippedIncompleteMeals: new Set(shopping?.skippedIncompleteMealIds) }
 }
 
-function sameRestrictions(a: AppStateV1['household']['hardRestrictions'], b: AppStateV1['household']['hardRestrictions']): boolean {
+function sameRestrictions(a: AppStateV2['household']['hardRestrictions'], b: AppStateV2['household']['hardRestrictions']): boolean {
   return a.length === b.length && a.every((restriction, index) => restriction.id === b[index].id && restriction.label === b[index].label && restriction.dinerId === b[index].dinerId)
 }
 
@@ -50,10 +50,11 @@ function download(filename: string, contents: string): void {
 }
 
 function Recovery({ recovery }: { recovery: Extract<LoadResult, { kind: 'recovery' }> }) {
+  const [error, setError] = useState('')
   const reset = () => {
     if (window.confirm('Reset this device to a new empty plan?')) {
-      saveAppState(localStorage, createEmptyAppState())
-      window.location.reload()
+      if (saveAppState(localStorage, createEmptyAppState()).saved) window.location.reload()
+      else setError('Could not reset saved data locally.')
     }
   }
 
@@ -67,6 +68,7 @@ function Recovery({ recovery }: { recovery: Extract<LoadResult, { kind: 'recover
         <button onClick={() => download('whats-for-dinner-recovery.json', recovery.raw)}>Download saved data</button>
         <button onClick={reset}>Reset saved data</button>
       </p>
+      {error && <p role="status">{error}</p>}
     </main>
   )
 }
@@ -75,13 +77,13 @@ export default function App() {
   const [loaded] = useState(() => loadAppState(localStorage))
   if (loaded.kind === 'recovery') return <Recovery recovery={loaded} />
 
-  return <ReadyApp initialState={loaded.state} />
+  return <ReadyApp initialState={loaded.state} initialUnsaved={loaded.unsaved} />
 }
 
-function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
+function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppStateV2; initialUnsaved?: boolean }) {
   const [state, dispatch] = useReducer(reducer, initialState)
   const [initialShoppingControls] = useState(() => shoppingControls(initialState))
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'unsaved'>('saved')
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'unsaved'>(initialUnsaved ? 'unsaved' : 'saved')
   const [message, setMessage] = useState('')
   const [dinerName, setDinerName] = useState('')
   const [restriction, setRestriction] = useState('')
@@ -97,6 +99,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
   const [selectedCandidate, setSelectedCandidate] = useState('')
   const [destination, setDestination] = useState<'new' | 'existing' | 'recipe'>('new')
   const [existingMealId, setExistingMealId] = useState('')
+  const [newToHousehold, setNewToHousehold] = useState(false)
   const [planStartDate, setPlanStartDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [weeklyPreview, setWeeklyPreview] = useState<ReturnType<typeof buildWeeklyPlan>>()
   const [optionalAction, setOptionalAction] = useState<'fallback' | 'use' | 'adapt' | 'reject'>('fallback')
@@ -123,13 +126,15 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
   const [activeEffortMinutes, setActiveEffortMinutes] = useState('')
   const [repairSlotId, setRepairSlotId] = useState<string>()
 
-  const commit = (next: AppStateV1) => {
-    setSaveStatus(saveAppState(localStorage, next).saved ? 'saved' : 'unsaved')
+  const commit = (next: AppStateV2) => {
+    const result = saveAppState(localStorage, next)
+    setSaveStatus(result.saved ? 'saved' : 'unsaved')
     setWeeklyPreview(undefined)
     setRepairPreview(undefined)
     dispatch({ type: 'replace', state: next })
+    return result
   }
-  const hydrateShoppingControls = (next: AppStateV1) => {
+  const hydrateShoppingControls = (next: AppStateV2) => {
     const controls = shoppingControls(next)
     setUnavailableItems(controls.unavailable)
     setSkippedItems(controls.skipped)
@@ -141,7 +146,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
     if (window.confirm('Reset all current app data?')) commit(createEmptyAppState())
   }
 
-  const update = (change: (current: AppStateV1) => AppStateV1) => commit(change(state))
+  const update = (change: (current: AppStateV2) => AppStateV2) => commit(change(state))
   const startCooking = (planId: string, slotId: string) => update((current) => ({ ...current, plans: current.plans.map((plan) => plan.id !== planId ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id !== slotId || slot.cookingStartedAt ? slot : { ...slot, cookingStartedAt: new Date().toISOString() }) }) }))
   const dinnerReady = (planId: string, slotId: string) => {
     const now = new Date()
@@ -193,7 +198,7 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
     const slotIds = weeklyPreview.slots.map(() => crypto.randomUUID())
     const rejectedMealId = optionalAction === 'reject' ? weeklyPreview.optional?.mealId : undefined
     const takeoutIndex = weeklyPreview.slots.findIndex((slot) => slot.date === plannedTakeoutDate)
-    const next: AppStateV1 = { ...state, meals: rejectedMealId ? state.meals.map((meal) => meal.id === rejectedMealId ? { ...meal, active: false } : meal) : state.meals, plans: [...state.plans, {
+    const next: AppStateV2 = { ...state, meals: rejectedMealId ? state.meals.map((meal) => meal.id === rejectedMealId ? { ...meal, active: false } : meal) : state.meals, plans: [...state.plans, {
       id: planId,
       confirmed: true,
       scoreReasons: weeklyPreview.slots.flatMap((slot) => slot.reasons).filter((reason, index, values) => values.indexOf(reason) === index),
@@ -215,16 +220,16 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
         try {
           const imported = importAppState(raw)
           if (!window.confirm('Replace all current app data with this backup?')) return
-          const next: AppStateV1 = sameRestrictions(state.household.hardRestrictions, imported.household.hardRestrictions) ? imported : { ...imported, meals: imported.meals.map((meal) => ({ ...meal, safetyReview: 'unknown' })) }
-          commit(next)
+          const next: AppStateV2 = sameRestrictions(state.household.hardRestrictions, imported.household.hardRestrictions) ? imported : { ...imported, meals: imported.meals.map((meal) => ({ ...meal, safetyReview: 'unknown' })) }
+          const saved = commit(next).saved
           hydrateShoppingControls(next)
-          setMessage('Backup imported.')
+          setMessage(saved ? 'Backup imported.' : 'Loaded but not saved locally.')
         } catch {
-          setMessage('That file is not a valid V1 backup.')
+          setMessage('That file is not a valid backup.')
         }
       })
       .catch(() => {
-        setMessage('That file is not a valid V1 backup.')
+        setMessage('That file is not a valid backup.')
       })
       .finally(() => {
         event.target.value = ''
@@ -233,11 +238,11 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
   const onRecipeKeeperImport = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
-    if (file.size > 32 * 1024 * 1024) { setCandidates([]); setSelectedCandidate(''); setMessage('The ZIP file exceeds 32 MiB.'); event.target.value = ''; return }
+    if (file.size > 32 * 1024 * 1024) { setCandidates([]); setSelectedCandidate(''); setNewToHousehold(false); setMessage('The ZIP file exceeds 32 MiB.'); event.target.value = ''; return }
     void file.arrayBuffer().then((buffer) => readRecipeKeeperZip(new Uint8Array(buffer))).then((result) => {
-      setCandidates(result.candidates); setSkipped(result.skipped); setSelectedCandidate(result.candidates[0].externalId); setMessage(`Found ${result.candidates.length} recipes${result.skipped ? `; skipped ${result.skipped}.` : '.'}`)
+      setCandidates(result.candidates); setSkipped(result.skipped); setSelectedCandidate(result.candidates[0].externalId); setNewToHousehold(false); setMessage(`Found ${result.candidates.length} recipes${result.skipped ? `; skipped ${result.skipped}.` : '.'}`)
     }).catch((error: unknown) => {
-      setCandidates([]); setSelectedCandidate(''); setMessage(error instanceof Error ? error.message : 'Could not read that Recipe Keeper ZIP.')
+      setCandidates([]); setSelectedCandidate(''); setNewToHousehold(false); setMessage(error instanceof Error ? error.message : 'Could not read that Recipe Keeper ZIP.')
     }).finally(() => { event.target.value = '' })
   }
   const saveCandidate = () => {
@@ -253,10 +258,10 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
     if (!window.confirm(`Save ${candidate.title}?`)) return
     const recipeId = crypto.randomUUID(); const mealId = targetMeal?.id ?? (destination === 'new' ? crypto.randomUUID() : undefined)
     const recipe = { id: recipeId, externalId: candidate.externalId, title: candidate.title, ...(mealId && { mealId }), source: { provider: 'Recipe Keeper', ...(candidate.source && { reference: candidate.source }) }, ...(candidate.category && { category: candidate.category }), ...(candidate.prepMinutes !== undefined && { prepMinutes: candidate.prepMinutes }), ...(candidate.cookMinutes !== undefined && { cookMinutes: candidate.cookMinutes }), ...(candidate.yield && { yield: candidate.yield }), ...(candidate.ingredients && { ingredients: candidate.ingredients }), ...(candidate.instructions && { instructions: candidate.instructions }) }
-    update((current) => ({ ...current, recipes: [...current.recipes, recipe], meals: destination === 'new' ? [...current.meals, { id: mealId!, name: candidate.title, active: true, provisional: true, safetyReview: 'unknown', recipeIds: [recipeId] }] : targetMeal ? current.meals.map((meal) => meal.id === targetMeal.id ? { ...meal, recipeIds: [...(meal.recipeIds ?? []), recipeId], safetyReview: 'unknown' } : meal) : current.meals }))
+    update((current) => ({ ...current, recipes: [...current.recipes, recipe], meals: destination === 'new' ? [...current.meals, { id: mealId!, name: candidate.title, active: true, ...(newToHousehold && { provisional: true }), safetyReview: 'unknown', recipeIds: [recipeId] }] : targetMeal ? current.meals.map((meal) => meal.id === targetMeal.id ? { ...meal, recipeIds: [...(meal.recipeIds ?? []), recipeId], safetyReview: 'unknown' } : meal) : current.meals }))
     setMessage(destination === 'recipe' ? 'Recipe saved without a meal.' : 'Recipe saved. Confirm compatibility before planning.')
     const remainingCandidates = candidates.filter((item) => item.externalId !== candidate.externalId)
-    setCandidates(remainingCandidates); setSelectedCandidate(remainingCandidates[0]?.externalId ?? '')
+    setCandidates(remainingCandidates); setSelectedCandidate(remainingCandidates[0]?.externalId ?? ''); setNewToHousehold(false)
   }
   const visibleCandidates = candidates.filter((candidate) => candidate.title.toLowerCase().includes(candidateQuery.trim().toLowerCase()))
   const chosenCandidate = visibleCandidates.find((candidate) => candidate.externalId === selectedCandidate) ?? visibleCandidates[0]
@@ -432,10 +437,11 @@ function ReadyApp({ initialState }: { initialState: AppStateV1 }) {
         <h2 id="recipe-keeper-heading">Recipe Keeper import</h2>
         <label>Recipe Keeper ZIP<input aria-label="Recipe Keeper ZIP" type="file" accept="application/zip,.zip" onChange={onRecipeKeeperImport} /></label>
         {candidates.length > 0 && <div className="recipe-import">
-          <label>Search recipes<input value={candidateQuery} onChange={(event) => setCandidateQuery(event.target.value)} /></label>
-          <label>Recipe<select value={chosenCandidate?.externalId ?? ''} onChange={(event) => setSelectedCandidate(event.target.value)}>{visibleCandidates.map((candidate) => <option key={candidate.externalId} value={candidate.externalId}>{candidate.title}</option>)}</select></label>
+          <label>Search recipes<input value={candidateQuery} onChange={(event) => { setCandidateQuery(event.target.value); setNewToHousehold(false) }} /></label>
+          <label>Recipe<select value={chosenCandidate?.externalId ?? ''} onChange={(event) => { setSelectedCandidate(event.target.value); setNewToHousehold(false) }}>{visibleCandidates.map((candidate) => <option key={candidate.externalId} value={candidate.externalId}>{candidate.title}</option>)}</select></label>
           {chosenCandidate && <p>Preview: {chosenCandidate.title}{chosenCandidate.category && ` — ${chosenCandidate.category}`}{chosenCandidate.ingredients && ` (${chosenCandidate.ingredients.length} ingredients)`}</p>}
-          <fieldset><legend>Save destination</legend><label><input type="radio" checked={destination === 'new'} onChange={() => setDestination('new')} /> Add as a new meal</label><label><input type="radio" checked={destination === 'existing'} onChange={() => setDestination('existing')} /> Add as a version of an existing meal</label><label><input type="radio" checked={destination === 'recipe'} onChange={() => setDestination('recipe')} /> Save recipe only</label></fieldset>
+          <fieldset><legend>Save destination</legend><label><input type="radio" checked={destination === 'new'} onChange={() => { setDestination('new'); setNewToHousehold(false) }} /> Add as a new meal</label><label><input type="radio" checked={destination === 'existing'} onChange={() => { setDestination('existing'); setNewToHousehold(false) }} /> Add as a version of an existing meal</label><label><input type="radio" checked={destination === 'recipe'} onChange={() => { setDestination('recipe'); setNewToHousehold(false) }} /> Save recipe only</label></fieldset>
+          {destination === 'new' && <label><input aria-label="New to our household" type="checkbox" checked={newToHousehold} onChange={(event) => setNewToHousehold(event.target.checked)} /> New to our household</label>}
           {destination === 'existing' && <label>Existing meal<select value={existingMealId} onChange={(event) => setExistingMealId(event.target.value)}><option value="">Choose a meal</option>{state.meals.map((meal) => <option key={meal.id} value={meal.id}>{meal.name}{meal.name.toLowerCase() === chosenCandidate?.title.toLowerCase() ? ' (title match)' : ''}</option>)}</select></label>}
           <button onClick={saveCandidate} disabled={!chosenCandidate}>Confirm import</button>
           {skipped > 0 && <p>{skipped} recipes were skipped.</p>}

@@ -60,8 +60,8 @@ function duplicateIds(ctx: z.RefinementCtx, values: { id: string; path: (string 
   })
 }
 
-export const appStateV1Schema = z.object({
-  schemaVersion: z.literal(1),
+const appStateSchema = (schemaVersion: 1 | 2) => z.object({
+  schemaVersion: z.literal(schemaVersion),
   household: z.object({ diners: z.array(dinerSchema).max(20), hardRestrictions: z.array(restrictionSchema).max(50), scheduleExceptions: z.array(scheduleExceptionSchema).max(100) }).strict(),
   meals: z.array(mealSchema).max(500), recipes: z.array(recipeSchema).max(1_000), plans: z.array(planSchema).max(100), leftoverLots: z.array(leftoverLotSchema).max(500), outcomes: z.array(outcomeSchema).max(2_000),
 }).strict().superRefine((state, ctx) => {
@@ -155,3 +155,6 @@ export const appStateV1Schema = z.object({
 })
 
 export type AppStateV1 = z.infer<typeof appStateV1Schema>
+export const appStateV1Schema = appStateSchema(1)
+export const appStateV2Schema = appStateSchema(2)
+export type AppStateV2 = z.infer<typeof appStateV2Schema>

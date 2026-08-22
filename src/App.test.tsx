@@ -40,6 +40,7 @@ describe('backup import', () => {
     fireEvent.change(input, { target: { files: [{ text: () => Promise.resolve(backup('unsaved-meal')) }] } })
 
     await waitFor(() => expect(screen.getByText('Changes are not saved locally.')).toBeInTheDocument())
+    expect(screen.getByRole('status')).toHaveTextContent('Loaded but not saved locally.')
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({
       meals: [{ id: 'new-meal' }],
     })
@@ -68,10 +69,34 @@ describe('backup import', () => {
 
     fireEvent.change(input, { target: { files: [{ text: () => Promise.reject(new Error('read failed')) }] } })
 
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('That file is not a valid V1 backup.'))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('That file is not a valid backup.'))
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({
       meals: [{ id: 'old-meal' }],
     })
+  })
+
+  it('shows migrated V1 data as unsaved when its startup write fails', () => {
+    const v1 = { ...createEmptyAppState(), schemaVersion: 1, meals: [{ id: 'old-meal', name: 'Tacos', active: true, provisional: true }] }
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(v1))
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota exceeded') })
+
+    render(<App />)
+
+    expect(screen.getByText('Changes are not saved locally.')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Tacos')).toBeInTheDocument()
+    expect(localStorage.getItem(APP_STATE_STORAGE_KEY)).toBe(JSON.stringify(v1))
+  })
+
+  it('keeps recovery visible when resetting malformed data cannot be saved', () => {
+    localStorage.setItem(APP_STATE_STORAGE_KEY, '{broken')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota exceeded') })
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Reset saved data' }))
+
+    expect(screen.getByRole('heading', { name: 'Saved data needs recovery' })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Could not reset saved data locally.')
   })
 })
 
@@ -247,6 +272,7 @@ describe('weekly planning', () => {
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
     const view = render(<App />)
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
     fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
     expect(screen.getByRole('heading', { name: 'Weekly plan preview' })).toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans).toHaveLength(0)
@@ -336,6 +362,7 @@ describe('weekly planning', () => {
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
     fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Plan takeout for 2026-08-17' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
@@ -522,13 +549,51 @@ describe('Recipe Keeper import', () => {
     fireEvent.change(input, { target: { files: [{ arrayBuffer: () => Promise.resolve(bytes.buffer) }] } })
 
     await screen.findByText('Preview: Weeknight Soup — Dinner / Soup (2 ingredients)')
+    expect(screen.getByLabelText('New to our household')).not.toBeChecked()
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({ meals: [{ id: 'old-meal' }], recipes: [] })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }))
 
     await waitFor(() => expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toMatchObject({
-      meals: expect.arrayContaining([expect.objectContaining({ name: 'Weeknight Soup', provisional: true, safetyReview: 'unknown' })]),
+      meals: expect.arrayContaining([expect.objectContaining({ name: 'Weeknight Soup', safetyReview: 'unknown' })]),
       recipes: expect.arrayContaining([expect.objectContaining({ title: 'Weeknight Soup', externalId: 'rk-1', source: { provider: 'Recipe Keeper', reference: 'Family notes' } })]),
     }))
+  })
+
+  it('marks an opted-in new meal unfamiliar and preserves an existing meal familiarity for recipe versions', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'familiar', name: 'Existing dinner', active: true, provisional: false })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    render(<App />)
+    const bytes = zipSync({ 'recipes.html': strToU8(recipeFixture) })
+    const secondBytes = zipSync({ 'recipes.html': strToU8(recipeFixture.replace('rk-1', 'rk-2')) })
+    fireEvent.change(screen.getByLabelText('Recipe Keeper ZIP'), { target: { files: [{ arrayBuffer: () => Promise.resolve(secondBytes.buffer) }] } })
+    await screen.findByText(/Preview: Weeknight Soup/)
+    fireEvent.click(screen.getByLabelText('New to our household'))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }))
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').meals).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Weeknight Soup', provisional: true })])))
+
+    fireEvent.change(screen.getByLabelText('Recipe Keeper ZIP'), { target: { files: [{ arrayBuffer: () => Promise.resolve(bytes.buffer) }] } })
+    await screen.findByText(/Preview: Weeknight Soup/)
+    fireEvent.click(screen.getByLabelText('Add as a version of an existing meal'))
+    fireEvent.change(screen.getByLabelText('Existing meal'), { target: { value: 'familiar' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }))
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').meals).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'familiar', provisional: false, safetyReview: 'unknown' })])))
+  })
+
+  it('does not carry the unfamiliar opt-in from one candidate to another', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    const second = recipeFixture.replace('rk-1', 'rk-2').replace('Weeknight Soup', 'Quick Pasta')
+    const bytes = zipSync({ 'recipes.html': strToU8(recipeFixture.replace('</body>', `${second}</body>`)) })
+    fireEvent.change(screen.getByLabelText('Recipe Keeper ZIP'), { target: { files: [{ arrayBuffer: () => Promise.resolve(bytes.buffer) }] } })
+    await screen.findByText(/Preview: Weeknight Soup/)
+    fireEvent.click(screen.getByLabelText('New to our household'))
+    fireEvent.change(screen.getByLabelText('Recipe'), { target: { value: 'rk-2' } })
+    expect(screen.getByLabelText('New to our household')).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }))
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').meals).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Quick Pasta' })])))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').meals.find((meal: { name: string }) => meal.name === 'Quick Pasta')).not.toHaveProperty('provisional')
   })
 
   it('saves the visible filtered candidate after saving another import', async () => {
