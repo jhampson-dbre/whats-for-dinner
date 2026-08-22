@@ -1,8 +1,8 @@
 # What's for Dinner? Adaptive Planning MVP
 
-Status: Implemented; pilot validation active
-Date: 2026-08-21
-Tracker: EPIC-1, EPIC-4
+Status: Implemented; hands-off-night pilot correction approved for review, implementation paused
+Date: 2026-08-22
+Tracker: EPIC-1, EPIC-4, TREK-15
 
 The pilot onboarding and adaptive replanning corrections completed 2026-08-22. Pilot
 validation is active.
@@ -40,6 +40,7 @@ goals.
 - Plans-changed recovery with confirmed minimal plan repairs.
 - Correctable dinner outcomes and confidence-aware household learning.
 - Planned takeout as an explicit user choice.
+- Distinct quick-cook and hands-off household schedule exceptions.
 
 ### Deferred
 
@@ -136,11 +137,23 @@ start-to-ready elapsed time may inform explanations, but never establish hard-fi
 eligibility. This keeps slow-cooker and other make-ahead meals eligible when their
 known hands-on effort fits the initial 30-minute constrained-night threshold.
 
+The hands-off-night pilot correction separates three date capacities. An absent schedule
+exception is normal. `constrained: true` means a quick-cook night and retains the known
+30-minute hands-on threshold above. `handsOff: true` means the household cannot actively
+cook during the dinner window: a reserved planned-leftover target ranks first, followed
+by a selected recipe explicitly marked `handsOffSlowCooker: true`. Leftovers are a soft
+ranking preference, not a requirement; multiple hands-off nights may exceed available
+planned yields. Quick meals, name-only meals, and unmarked recipes do not fit a hands-off
+night. If neither leftovers nor a marked recipe can cover the date, preview is
+non-confirmable guidance or no-eligible—not automatic takeout. Takeout remains an
+explicit user choice. For the MVP, the recipe marker is a household assertion that its
+slow-cooker start window is feasible; timing and appliance-safety modeling are deferred.
+
 `plannedLeftoverDinner` remains the explicit assertion that one cooking occurrence
 produces one additional household dinner. The planner assigns that coverage to the
-earliest unfilled later constrained night in the same seven-day plan, even when an
-unconstrained dinner occurs between source and leftovers. When no later constrained
-night remains, it uses the earliest unfilled later night. A flagged meal cannot be
+earliest unfilled later hands-off night, then the earliest unfilled later constrained
+night, then the earliest unfilled later normal night in the same seven-day plan, even
+when another dinner occurs between source and leftovers. A flagged meal cannot be
 selected as a cooking source when no later target can be reserved, and leftover-fit
 points are awarded only after reservation. Multiple sources reserve distinct targets.
 Each coverage unit is consumed once, retains its link to the earlier source slot,
@@ -210,12 +223,21 @@ replacing a target removes its link. Replacing an unfinished actual-leftover tar
 reactivates its reserved lot, while completed consumers remain fixed. Confirmation
 appends repair-revision evidence for every changed slot.
 
+On a hands-off repair, either a valid planned-leftover dependency or a user-selected
+available confirmed leftover lot satisfies capacity, and each remains single-consumer.
+Initial planning prefers and reserves planned coverage; it never silently consumes an
+actual leftover lot.
+
 Restrictions, schedule exceptions, recipe selection, grocery availability, and
 leftover outcomes invalidate an open preview. Changes affecting a confirmed plan mark
 its affected unfinished dates for review and offer replanning; they never silently save
-a repair. Every proposed plan revalidates active state, explicit dietary compatibility,
-constrained-night hands-on effort, recipe version, shopping commitments, and leftover
-links. A replacement cannot use a meal or recipe that fails those checks.
+a repair. One pure effective-capacity resolver is shared by initial planning, every
+repair action including both destinations of a swap, and confirmed-plan revalidation.
+Every proposed plan revalidates active state, explicit dietary compatibility, capacity,
+recipe version, shopping commitments, and leftover links. A hands-off cooking slot is
+valid only when its exact selected `recipeId` references a recipe marked
+`handsOffSlowCooker: true`; planned- and actual-leftover consumer slots bypass cooking
+capability checks. A replacement cannot use a meal or recipe that fails those checks.
 
 **Plans changed** may offer:
 
@@ -381,21 +403,32 @@ semantics are its only schema-version changes:
 - `outcomes`: raw timing, availability, acceptance, leftovers, corrections, and
   recovery classification.
 
-Adaptive replanning introduces `AppStateV3`. V1 and V2 schemas remain frozen. V3 adds
+Adaptive replanning introduced `AppStateV3`. V1 and V2 schemas remain frozen. V3 adds
 three optional fields: `recipes.leftoverQuantityMultiplier` is `1.5` or `2`, shopping
 items may carry position-aligned `sourceSlotIds`, and outcomes may carry
 `leftoverServing: true`. An absent multiplier means `1x`; absent provenance uses the
 conservative matching above; absent leftover-serving status is derived from the
-referenced slot's planned or actual leftover link. The bounded migration chain is V1 ->
-V2 -> V3; load and import accept all three, while normal save and export emit V3 only.
-V2-to-V3 otherwise changes only the discriminator and writes `leftoverServing: true`
-where derivable. Corrections preserve the marker.
+referenced slot's planned or actual leftover link. The frozen V2-to-V3 migration changes
+only the discriminator and writes `leftoverServing: true` where derivable. Corrections
+preserve the marker.
 
-Confirming a replan constructs and validates the complete next V3 document before
+The hands-off-night correction introduces `AppStateV4`. V1, V2, and V3 remain frozen.
+V4 adds only optional `household.scheduleExceptions[].handsOff: true` and
+`recipes[].handsOffSlowCooker: true`. V3-to-V4 changes only the discriminator; absent
+fields preserve all prior meanings, so existing constrained dates remain quick-cook
+dates and imported recipes remain unmarked. When duplicate exceptions exist for one
+date, effective capacity resolves `handsOff` before `constrained` before normal without
+rewriting imported or legacy state. The canonical writer replaces all records for the
+edited date with at most one record: `handsOff: true`, `constrained: true`, or neither
+capacity field for normal. It retains the replacement note when supplied, otherwise the
+latest existing nonblank note; a normal date without a note stores no record. Load and
+import continue to accept V1 through V4; normal save and export emit only the current V4.
+
+Confirming a replan constructs and validates the complete next V4 document before
 changing memory or storage. It atomically includes slot and dependency changes, one
 repair revision for every changed slot, affected leftover lots, shopping provenance,
 perishable acknowledgements, and quantity-preference consequences. Validation failure
-changes neither memory nor storage. A storage failure may retain the already-valid V3 in
+changes neither memory nor storage. A storage failure may retain the already-valid V4 in
 memory as visibly unsaved while preserving the prior exact stored raw value. Every
 committed state mutation invalidates all transient previews; no persisted revision token
 is added.
@@ -429,25 +462,28 @@ The storage and migration contract is:
   that the old schema did not distinguish.
 - `migrateV2ToV3` accepts only fully valid frozen V2, changes the discriminator, writes
   only derivable legacy leftover-serving markers, and validates the V3 result. The other
-  optional fields remain absent. V1 loads and imports pass through both migration steps.
-- A missing key initializes an empty V3 document. Valid V3 loads directly.
-- Valid V1 or V2 loads as migrated V3 and attempts one same-key write without deleting
-  the old value first. Success enters ready/saved state. Failure leaves the exact prior
-  raw value stored, runs the migrated V3 in memory, and visibly enters ready/unsaved state.
-- Malformed V1-, V2-, or V3-shaped data enters malformed recovery. Any other discriminator
-  enters unsupported-version recovery. Startup never overwrites the exact raw value in
-  either case.
-- Import accepts a fully valid V1, V2, or V3 document. Older versions are migrated before
-  the existing restriction-change safety reset and final V3 validation. Confirmation occurs before
-  whole-document replacement; imports never merge.
+  optional fields remain absent. `migrateV3ToV4` accepts only fully valid frozen V3,
+  changes only the discriminator, and validates the V4 result; both new optional fields
+  remain absent. V1 loads and imports pass through V1 -> V2 -> V3 -> V4.
+- A missing key initializes an empty V4 document. Valid V4 loads directly.
+- Valid V1, V2, or V3 loads as migrated V4 and attempts one same-key write without
+  deleting the old value first. Success enters ready/saved state. Failure leaves the
+  exact prior raw value stored, runs the migrated V4 in memory, and visibly enters
+  ready/unsaved state.
+- Malformed V1-, V2-, V3-, or V4-shaped data enters malformed recovery. Any other
+  discriminator enters unsupported-version recovery. Startup never overwrites the exact
+  raw value in either case.
+- Import accepts a fully valid V1, V2, V3, or V4 document. Older versions are migrated
+  before the existing restriction-change safety reset and final V4 validation.
+  Confirmation occurs before whole-document replacement; imports never merge.
 - After import confirmation, a failed write leaves the prior stored raw value untouched,
-  keeps the imported V3 in memory as unsaved, and reports **Loaded but not saved
+  keeps the imported V4 in memory as unsaved, and reports **Loaded but not saved
   locally** rather than claiming the backup was imported successfully.
-- Normal export validates and emits only the current in-memory V3, including a valid
-  unsaved V3. V1 and V2 remain accepted only as migration input.
-- Recovery reset reloads only after a successful V3 write. A failed reset leaves
+- Normal export validates and emits only the current in-memory V4, including a valid
+  unsaved V4. V1 through V3 remain accepted only as migration input.
+- Recovery reset reloads only after a successful V4 write. A failed reset leaves
   recovery visible and reports the error.
-- Later committed reducer changes continue to write the complete validated V3 without
+- Later committed reducer changes continue to write the complete validated V4 without
   deleting the previous value first. A failed write keeps memory, preserves the last
   stored raw value, and visibly marks changes as unsaved.
 
@@ -559,6 +595,25 @@ a fixed slot outside the targeted dependency closure; overlap resolution needs a
 implicit current-plan policy; or leftover behavior requires multiple planned targets or
 multiple consumers of one actual lot.
 
+## Hands-off-night pilot correction delivery plan
+
+Planning is approved and architecture review is required before implementation. This
+section does not authorize implementation.
+
+1. **One vertical V4 hands-off-capacity slice**
+   Freeze V1 through V3 and add the two optional V4 markers and bounded V3-to-V4
+   migration above. Let the household select normal, constrained/quick-cook, or
+   hands-off capacity for a date and explicitly mark a selected recipe as slow-cooker
+   capable. Align initial planning, repair, confirmed-plan revalidation, preview
+   invalidation, explanations, import/export, and storage behavior. On hands-off dates,
+   use one available reserved leftover target first and otherwise allow only a marked
+   selected recipe. Preserve one-source/one-target semantics and explicit takeout.
+
+Do not add time-of-day scheduling, automatic slow-cooker detection, appliance safety
+claims, yield prediction, additional leftover capacity, automatic takeout, a rules
+engine, or a separate recipe-preference system. No finer task split is justified unless
+architecture review identifies a foundation dependency.
+
 ## Verification
 
 Use focused TDD for every behavior slice. After each task, run:
@@ -570,12 +625,13 @@ npm run build
 ```
 
 Use pure fixtures for import parsing, scoring, exclusions, grocery merging, repairs,
-leftovers, and learning. Storage checks cover frozen V1 -> V2 -> V3 and direct V2 -> V3
-migration; valid V3 direct load, import, reload, and saved/unsaved export; derivation and
-correction preservation of `leftoverServing`; absent V3 field meanings; startup migration
-success and failure; exact old-raw preservation after failed migration, import, reset, or
-save writes; initial unsaved state; retry on a later mutation; malformed V1/V2/V3
-recovery; future-version recovery; restriction safety reset; and memory/disk divergence.
+leftovers, and learning. Storage checks cover frozen V1 -> V2 -> V3 -> V4 plus direct
+V2 -> V3 and V3 -> V4 migrations; valid V4 direct load, import, reload, and
+saved/unsaved export; derivation and correction preservation of `leftoverServing`;
+absent V3 and V4 field meanings; startup migration success and failure; exact old-raw
+preservation after failed migration, import, reset, or save writes; initial unsaved
+state; retry on a later mutation; malformed V1/V2/V3/V4 recovery; future-version
+recovery; restriction safety reset; and memory/disk divergence.
 Importer checks cover rejection before
 extraction for invalid signature, file/entry/name/path limits, missing or duplicate
 `recipes.html`, encrypted or unsupported compression, decoded size, malformed records,
@@ -587,16 +643,28 @@ intentional leftovers; discriminated guidance/no-eligible results; and both supp
 recipe association directions. Import interaction coverage verifies familiar-by-default
 new meals, persisted unfamiliar opt-in, and version imports preserving target familiarity. App interaction
 coverage verifies that `guidance` and `no-eligible` omit or disable plan confirmation
-and leave the V3 `plans` collection unchanged. Use Testing Library
+and leave the V4 `plans` collection unchanged. Use Testing Library
 for the task's primary interaction flow. After the final task, add one browser smoke
 path for onboarding -> plan -> shop -> cook -> feedback, including one confirmed replan
 only if it fits that bounded path. A second broad end-to-end matrix is not required.
+
+For the hands-off correction, add focused schema/migration coverage and pure planner,
+repair, and revalidation cases proving: normal behavior is unchanged; constrained keeps
+the known 30-minute hands-on threshold; hands-off rejects ordinary quick meals; one
+yield covers only one later hands-off dinner; two hands-off nights with one yield use
+leftovers then a marked slow-cooker recipe; missing coverage is non-confirmable and
+never automatic takeout; capacity or recipe-marker edits invalidate affected previews;
+and imported recipes default unmarked. Cover canonical capacity replacement and note
+preservation, both swap destinations, valid planned and selected actual leftovers, and
+the rule against silently consuming actual lots. Add one Testing Library flow that marks
+a night and recipe, then previews the resulting plan.
 
 ## MVP acceptance signals
 
 - A household reaches a seven-day first plan without entering a full recipe manually
   or recording prior dinner outcomes.
-- The plan includes intentional leftovers and reflects constrained nights.
+- The plan includes intentional leftovers and distinguishes quick-cook from hands-off
+  nights.
 - Name-only meals remain plannable without creating fictitious groceries.
 - Recipe Keeper imports preserve meal/recipe separation.
 - Grocery output clearly distinguishes known and incomplete ingredients.
