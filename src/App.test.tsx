@@ -298,6 +298,23 @@ describe('weekly planning', () => {
     expect(screen.getByText(/2026-08-17: Soup/)).toBeInTheDocument()
   })
 
+  it('keeps storage and rendered plans unchanged when confirmation fails V3 validation', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-a', name: 'Soup', active: true, safetyReview: 'approved' }, { id: 'meal-b', name: 'Pasta', active: true, safetyReview: 'approved' })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-0000-0000-000000000000')
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
+
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans).toEqual([])
+    expect(screen.queryByText('Current weekly plan')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Plan for shopping')).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Changes are invalid and were not applied.')
+  })
+
   it('clears a weekly preview when a committed household change invalidates it', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'meal-a', name: 'Soup', active: true, safetyReview: 'approved' })
@@ -443,22 +460,20 @@ describe('weekly planning', () => {
     ])
   })
 
-  it('routes an overlapping new plan to an explicitly selected existing plan repair', () => {
+  it('requires manual plan and date selection when one confirmed plan has multiple overlaps', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' }, { id: 'soup', name: 'Soup', active: true, safetyReview: 'approved' })
-    state.plans.push({ id: 'legacy', confirmed: true, slots: [{ id: 'legacy-slot', date: '2026-08-17', mealId: 'tacos' }] } as never)
+    state.plans.push({ id: 'legacy', confirmed: true, slots: [{ id: 'legacy-slot', date: '2026-08-17', mealId: 'tacos' }, { id: 'legacy-slot-2', date: '2026-08-18', mealId: 'soup' }] } as never)
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
     render(<App />)
     fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
     fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
-    openShopping('old')
-
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans).toHaveLength(1)
-    expect(screen.getByRole('status')).toHaveTextContent('Repair the overlapping confirmed plan first')
-    expect(screen.getByLabelText('Plan to repair')).toHaveValue('legacy')
-    expect(screen.getByLabelText('Date to repair')).toHaveValue('legacy-slot')
+    expect(screen.getByRole('status')).toHaveTextContent('Choose the overlapping confirmed plan and unfinished date explicitly')
+    expect(screen.getByLabelText('Plan to repair')).toHaveValue('')
+    expect(screen.getByLabelText('Date to repair')).toHaveValue('')
   })
 
   it('requires explicit selection when more than one confirmed plan overlaps', () => {
@@ -472,7 +487,7 @@ describe('weekly planning', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
 
-    expect(screen.getByRole('status')).toHaveTextContent('Choose the overlapping plan and date explicitly')
+    expect(screen.getByRole('status')).toHaveTextContent('Choose the overlapping confirmed plan and unfinished date explicitly')
     expect(screen.getByLabelText('Plan to repair')).toHaveValue('')
   })
 
@@ -487,6 +502,18 @@ describe('weekly planning', () => {
     expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Safety review for Tacos'), { target: { value: 'rejected' } })
     expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+  })
+
+  it('does not mark an unrelated confirmed plan after a name-only meal edit', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' }, { id: 'soup', name: 'Soup', active: true, safetyReview: 'approved' })
+    state.plans.push({ id: 'tacos-plan', confirmed: true, slots: [{ id: 'tacos-slot', date: '2026-08-17', mealId: 'tacos' }] }, { id: 'soup-plan', confirmed: true, slots: [{ id: 'soup-slot', date: '2026-08-18', mealId: 'soup' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Meal name Tacos'), { target: { value: 'Tuesday tacos' } })
+
+    expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
   })
 
   it('does not mark an existing plan for review when confirming a non-overlapping plan', () => {
@@ -696,6 +723,24 @@ describe('shopping and repair', () => {
     expect(screen.queryByRole('button', { name: 'Confirm repair' })).not.toBeInTheDocument()
   })
 
+  it('clears review notices for every slot changed by a confirmed repair', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' }, { id: 'soup', name: 'Soup', active: true, safetyReview: 'approved' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'tacos-slot', date: '2026-08-17', mealId: 'tacos' }, { id: 'soup-slot', date: '2026-08-18', mealId: 'soup' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Hard restriction'), { target: { value: 'Peanuts' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add restriction' }))
+    expect(screen.getAllByRole('button', { name: 'Review needed' })).toHaveLength(2)
+    openPlanRepair()
+    fireEvent.click(screen.getByRole('button', { name: 'Swap with Soup' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+
+    expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
+  })
+
   it('consumes a one-dinner leftover lot only when its repair is confirmed', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'tacos', name: 'Tacos', active: true })
@@ -707,6 +752,7 @@ describe('shopping and repair', () => {
     render(<App />)
     openPlanRepair()
     fireEvent.click(screen.getByRole('button', { name: 'Use confirmed leftovers' }))
+    expect(screen.getByText('Confirmed leftover lots consumed: lot.')).toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').leftoverLots[0]).toMatchObject({ active: true })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').leftoverLots[0]).toMatchObject({ active: false })
