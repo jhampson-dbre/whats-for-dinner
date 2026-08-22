@@ -1,11 +1,12 @@
 # What's for Dinner? Adaptive Planning MVP
 
-Status: Pilot onboarding complete; adaptive constraint and leftover correction approved
+Status: Adaptive replanning architecture and delivery plan accepted; implementation paused
 Date: 2026-08-21
 Tracker: EPIC-1
 
-Adaptive constraint and leftover correction approved 2026-08-22; implementation in
-progress under a follow-up tracker item.
+Adaptive constraint and leftover correction completed 2026-08-22. The broader adaptive
+replanning correction below is approved for planning and remains paused before
+implementation.
 
 ## Product outcome
 
@@ -109,7 +110,9 @@ later learning model can replace the initial scoring without discarding history.
 The planner may offer at most one explicitly unfamiliar meal per week. Its actions are
 **Use this meal**, **Make it work for us**, and **Not for us**. Taking no action uses
 an active, compatible familiar household fallback; prior accepted outcomes are not
-required. The optimizer never adds takeout; the user may select it during planning.
+required. The optimizer never adds takeout; the user may select one or more takeout
+dates during planning. Takeout dates are fixed inputs to the preview and never expose
+cooking, timing, effort, or leftover controls.
 
 `provisional: true` means that the household explicitly marked the meal **New to our
 household**. An absent or false value means familiar. Familiar, active, compatible
@@ -147,9 +150,9 @@ never increments cooking usage, and is never inferred from recipe yield alone.
 A linked leftover target is serving or reheating, not a second cooking occurrence. It
 does not expose **Start cooking**, may use **Dinner's ready** without a cooking-start
 timestamp, and never records active-effort or elapsed-cooking evidence. Acceptance and
-leftover outcome feedback remain available. Planned takeout is disabled for both a
-leftover source and its linked target so confirmation cannot silently break the
-coverage invariant.
+leftover outcome feedback remain available. If takeout replaces either end of an
+unfinished leftover link, the preview removes that dependency and replans its affected
+unfinished slot; it never silently converts the target into an ordinary cooking night.
 
 Planner preview output is discriminated:
 
@@ -186,8 +189,34 @@ different dinner rather than creating a separate entree.
 
 ### Plan repair
 
-Every repair is previewed and requires confirmation. Completed days remain fixed and
-unaffected future days remain unchanged.
+Initial planning and repair use one pure constraint-aware replanning path. A repair
+starts from a user-selected unfinished date in an explicitly selected plan; the app
+never implicitly chooses the latest plan or first unfinished slot. If more than one plan
+contains the date, the user selects the plan. Every repair is previewed and requires
+confirmation. A new plan cannot be confirmed while any proposed date overlaps an
+unfinished slot in another confirmed plan; the user is routed to repair that plan.
+Legacy or imported overlaps require explicit plan selection. Grocery, shopping,
+cooking, feedback, and repair operations receive an explicit transient `planId`; no
+persisted current-plan pointer is added.
+
+Completed days remain fixed. Takeout slots, confirmed planned-leftover coverage, and
+confirmed shopping commitments are fixed inputs except for the explicitly targeted slot
+and its required dependency closure. Other unfinished days remain unchanged unless
+changing them is required to restore a valid plan. The preview lists every changed slot,
+leftover link, and grocery effect before one atomic confirm.
+
+One planned source links to at most one later target, and each actual leftover lot
+reserves at most one dinner. Replacing a source removes and replans unfinished targets;
+replacing a target removes its link. Replacing an unfinished actual-leftover target
+reactivates its reserved lot, while completed consumers remain fixed. Confirmation
+appends repair-revision evidence for every changed slot.
+
+Restrictions, schedule exceptions, recipe selection, grocery availability, and
+leftover outcomes invalidate an open preview. Changes affecting a confirmed plan mark
+its affected unfinished dates for review and offer replanning; they never silently save
+a repair. Every proposed plan revalidates active state, explicit dietary compatibility,
+constrained-night hands-on effort, recipe version, shopping commitments, and leftover
+links. A replacement cannot use a meal or recipe that fails those checks.
 
 **Plans changed** may offer:
 
@@ -201,6 +230,11 @@ unaffected future days remain unchanged.
 changes immediate alternatives, success classification, or future recommendations.
 Never ask why and then show the same options.
 
+Recipe choice preserves an unchanged slot's recipe. A changed slot uses the meal's
+`recipeIds` association order and then recipe storage order; opaque ID sorting never
+selects a version. **Simpler version** is offered only when an existing adaptation
+selects a materially different stored recipe.
+
 Planned takeout is successful when eaten. Same-day takeout after an unforeseeable
 external disruption may be successful recovery. Takeout caused by predictable timing,
 effort, preparation, or acceptance failure is an unsuccessful planning outcome even
@@ -212,6 +246,17 @@ through reason-aware recovery.
 **Shopping done** confirms either all planned items or identifies unavailable/skipped
 items. Before confirmation, purchased-food preservation is provisional. Afterward,
 confirmed perishables receive stronger protection during repair.
+
+The confirmed shopping snapshot is immutable historical evidence; later derivation never
+replaces its item IDs, availability statuses, source lines, or provenance with new
+grocery-row data. When present, each `sourceSlotIds` entry is position-aligned with one
+`sourceLines` entry, has equal length, and references a slot in the snapshot's plan.
+Targeting first verifies that referenced slots still match. Otherwise it conservatively
+scans every unfinished slot in the selected plan by normalized parsed ingredient or
+exact normalized raw line. No match preserves the evidence and offers no targeted
+repair. Legacy snapshots without source-slot provenance use the same conservative scan.
+Removing or reducing any recorded perishable contribution requires explicit
+acknowledgement. Repair deltas are derived without rewriting the snapshot.
 
 Grocery consolidation:
 
@@ -229,8 +274,20 @@ Post-meal leftover coverage is recorded as:
 - Enough for one household dinner.
 - Enough for more than one household dinner.
 
-If a source meal does not produce expected leftovers, dependent future dinners are
-flagged and the smallest repair is proposed. The repair requires confirmation.
+One planned leftover yield represents exactly one reservable future household dinner;
+additional reported leftovers are feedback and are not auto-allocated in the MVP. If a
+source meal does not produce that dinner, its dependent unfinished dinner is immediately
+flagged and repaired. Future leftover planning for that meal is suspended until the user
+chooses either **Remove leftover planning** or **Increase recipe quantity**.
+
+Increasing quantity is a future preference on the specific failed leftover-producing
+recipe; it cannot repair food already cooked. Name-only meals can only remove leftover
+planning. The user selects `1.5x` or `2x`, and the immediate dependent dinner is still
+repaired. After a failed `2x` yield, further increase is not offered and leftover
+planning remains suspended until removed. The preference and immediate repair are saved
+only together after preview and confirmation. Grocery derivation scales only quantities
+the existing decimal-and-known-unit parser can parse. Other raw ingredient lines remain
+unchanged and are visibly marked **Manual quantity adjustment**.
 
 ### Cooking outcomes and learning
 
@@ -305,9 +362,9 @@ framework, database, auth, repository layer, or live AI dependency.
 
 Recipe images are not imported or persisted in the MVP.
 
-`AppStateV2` is the single runtime and persisted document. V2 retains the V1 document
-shape and reference refinements; the discriminator and familiarity semantics are the
-only schema-version changes:
+`AppStateV2` is the currently implemented runtime and persisted document. V2 retains
+the V1 document shape and reference refinements; the discriminator and familiarity
+semantics are its only schema-version changes:
 
 - `schemaVersion: 2` is the top-level discriminator.
 - IDs are stable opaque strings generated with the native `crypto.randomUUID()` API.
@@ -325,10 +382,35 @@ only schema-version changes:
 - `outcomes`: raw timing, availability, acceptance, leftovers, corrections, and
   recovery classification.
 
+Adaptive replanning introduces `AppStateV3`. V1 and V2 schemas remain frozen. V3 adds
+three optional fields: `recipes.leftoverQuantityMultiplier` is `1.5` or `2`, shopping
+items may carry position-aligned `sourceSlotIds`, and outcomes may carry
+`leftoverServing: true`. An absent multiplier means `1x`; absent provenance uses the
+conservative matching above; absent leftover-serving status is derived from the
+referenced slot's planned or actual leftover link. The bounded migration chain is V1 ->
+V2 -> V3; load and import accept all three, while normal save and export emit V3 only.
+V2-to-V3 otherwise changes only the discriminator and writes `leftoverServing: true`
+where derivable. Corrections preserve the marker.
+
+Confirming a replan constructs and validates the complete next V3 document before
+changing memory or storage. It atomically includes slot and dependency changes, one
+repair revision for every changed slot, affected leftover lots, shopping provenance,
+perishable acknowledgements, and quantity-preference consequences. Validation failure
+changes neither memory nor storage. A storage failure may retain the already-valid V3 in
+memory as visibly unsaved while preserving the prior exact stored raw value. Every
+committed state mutation invalidates all transient previews; no persisted revision token
+is added.
+
 Referenced records are not hard-deleted in the MVP. They are marked inactive,
 superseded, or corrected so historical plans and outcomes remain valid. Load and
 import validation reject dangling references. Learning summaries are derived from the
 current corrected raw records rather than persisted as a second source of truth.
+
+Leftover-target outcomes are marked as servings of an earlier cooking occurrence. They
+retain household acceptance evidence but do not contribute a second cooking-reliability,
+elapsed-time, or active-effort observation. Constrained-night effort uses corrected
+outcomes for the selected recipe version; only name-only meals fall back to meal-level
+evidence.
 
 The relevant plan slot persists `cookingStartedAt`, `dinnerReadyAt`,
 `feedbackEligibleAt`, and feedback dismissal state. **Dinner's ready** makes feedback
@@ -346,24 +428,27 @@ The storage and migration contract is:
   UI, whose Recipe Keeper flow set `provisional: true` by default and offered no
   explicit unfamiliar choice. It cannot preserve an externally authored V1 meaning
   that the old schema did not distinguish.
-- A missing key initializes an empty V2 document. Valid V2 loads directly.
-- Valid V1 loads as migrated V2 and attempts one same-key write without deleting the
-  old value first. Success enters ready/saved state. Failure leaves the exact V1 raw
-  value stored, runs the migrated V2 in memory, and visibly enters ready/unsaved state.
-- Malformed V1- or V2-shaped data enters malformed recovery. Any other discriminator
+- `migrateV2ToV3` accepts only fully valid frozen V2, changes the discriminator, writes
+  only derivable legacy leftover-serving markers, and validates the V3 result. The other
+  optional fields remain absent. V1 loads and imports pass through both migration steps.
+- A missing key initializes an empty V3 document. Valid V3 loads directly.
+- Valid V1 or V2 loads as migrated V3 and attempts one same-key write without deleting
+  the old value first. Success enters ready/saved state. Failure leaves the exact prior
+  raw value stored, runs the migrated V3 in memory, and visibly enters ready/unsaved state.
+- Malformed V1-, V2-, or V3-shaped data enters malformed recovery. Any other discriminator
   enters unsupported-version recovery. Startup never overwrites the exact raw value in
   either case.
-- Import accepts a fully valid V1 or V2 document. V1 is migrated before the existing
-  restriction-change safety reset and final V2 validation. Confirmation occurs before
+- Import accepts a fully valid V1, V2, or V3 document. Older versions are migrated before
+  the existing restriction-change safety reset and final V3 validation. Confirmation occurs before
   whole-document replacement; imports never merge.
 - After import confirmation, a failed write leaves the prior stored raw value untouched,
-  keeps the imported V2 in memory as unsaved, and reports **Loaded but not saved
+  keeps the imported V3 in memory as unsaved, and reports **Loaded but not saved
   locally** rather than claiming the backup was imported successfully.
-- Normal export validates and emits only the current in-memory V2, including a valid
-  unsaved V2. V1 remains accepted only as migration input.
-- Recovery reset reloads only after a successful V2 write. A failed reset leaves
+- Normal export validates and emits only the current in-memory V3, including a valid
+  unsaved V3. V1 and V2 remain accepted only as migration input.
+- Recovery reset reloads only after a successful V3 write. A failed reset leaves
   recovery visible and reports the error.
-- Later committed reducer changes continue to write the complete validated V2 without
+- Later committed reducer changes continue to write the complete validated V3 without
   deleting the previous value first. A failed write keeps memory, preserves the last
   stored raw value, and visibly marks changes as unsaved.
 
@@ -416,9 +501,65 @@ plan.
    familiar fallback semantics, discriminated preview results, actionable guidance,
    and recipe timing through either schema-supported meal association direction.
 
-Do not change the Recipe Keeper ZIP parser, infer dietary compatibility, add a second
-familiarity field, add dependencies, or introduce migration/history infrastructure
-beyond the single V1-to-V2 function.
+For the completed pilot-onboarding correction, do not change the Recipe Keeper ZIP
+parser, infer dietary compatibility, add a second familiarity field, add dependencies,
+or introduce migration/history infrastructure beyond its single V1-to-V2 function. The
+separate adaptive-replanning correction below adds only the bounded V2-to-V3 step
+specified above.
+
+## Adaptive replanning correction delivery plan
+
+Architecture and senior developer review accepted this dependency plan. Implementation
+remains paused pending separate user authorization.
+
+1. **Foundation: V3 and shared replanning core**
+   Own `schema.ts`, `storage.ts`, `weeklyPlan.ts`, `repair.ts`, `grocery.ts`,
+   `learning.ts`, their focused tests, and only the minimal V3 typing/storage adaptation
+   in `App.tsx` needed to keep the app buildable. Add one pure `replanRemainingWeek`
+   path for both initial planning and repair; retain `buildWeeklyPlan` as its
+   initial-preview wrapper. Freeze V1/V2 and add only the V3 fields and bounded migration
+   above. Reuse repair revisions for persisted takeout and existing grocery parsing; do
+   not add the new interaction flows in this slice.
+   Prove valid V1/V2 migration and V3 persistence plus fixed completed/takeout slots,
+   explicit target scope, safety/active/recipe/effort exclusions, one-source/one-target
+   and one-lot/one-consumer semantics, unavailable/perishable inputs, recipe precedence,
+   and non-duplicated leftover learning. Complete with focused unit/storage tests, lint,
+   and build.
+
+2. **Initial planning and confirmed-plan repair**
+   Depend on slice 1. Support multiple transient takeout dates, explicit plan/date
+   repair selection, review-needed presentation, overlap routing, and one preview that
+   shows every slot, dependency, and grocery change before atomic confirm. Each
+   restriction, schedule, recipe-selection, shopping-availability, or leftover-outcome
+   change makes an open preview unconfirmable; confirmation independently revalidates
+   the complete V3 document.
+   Prove new-plan overlap rejection, legacy-overlap plan selection, explicit date repair,
+   completed-slot preservation, fixed commitments outside the targeted dependency
+   closure, valid multi-takeout plans, takeout without cooking controls, failed validation
+   changing neither memory nor storage, and no implicit current-plan selection. Complete
+   with the primary Testing Library flow, full suite, lint, and build.
+
+3. **Shopping and failed-leftover triggers**
+   Depend on slice 2. Preserve confirmed shopping controls, target unavailable-item
+   repairs through source-slot provenance with a legacy fallback, require perishable
+   acknowledgement, and implement the failed-yield remove-or-multiply preview. Prove
+   shared unavailable ingredients, position-aligned immutable provenance, stale and
+   legacy conservative fallback, no-target evidence preservation, perishable quantity
+   reduction, one-lot/one-consumer reservation and unfinished-target reactivation,
+   immediate dependent repair, `1.5x` then `2x` recipe-scoped scaling, removal-only after
+   a failed `2x`, and manual marking of unparsed quantities. Complete with focused
+   interaction/domain tests, full suite, lint, and build.
+
+Do not add a rules engine, pantry or grocery-history ledger, automatic repair, takeout
+provider workflow, recipe-version preference UI, broader quantity parser, individual
+schedule model, or separate-entree path. The dependency order is 1 -> 2 -> 3; no finer
+task split is justified for the MVP.
+
+Stop and return to planning if the three V3 additions cannot express an invariant
+without rewriting historical evidence or widening the schema; a valid repair must alter
+a fixed slot outside the targeted dependency closure; overlap resolution needs an
+implicit current-plan policy; or leftover behavior requires multiple planned targets or
+multiple consumers of one actual lot.
 
 ## Verification
 
@@ -431,11 +572,13 @@ npm run build
 ```
 
 Use pure fixtures for import parsing, scoring, exclusions, grocery merging, repairs,
-leftovers, and learning. Storage checks cover full-field V1-to-V2 migration, startup
-migration success and failure, exact old-raw preservation, initial unsaved state, retry
-on a later mutation, V2 reload, malformed V1/V2 recovery, future-version recovery,
-failed recovery reset, V1/V2 backup import, restriction safety reset, failed-import
-memory/disk divergence, and V2-only export from saved and unsaved state. Importer checks cover rejection before
+leftovers, and learning. Storage checks cover frozen V1 -> V2 -> V3 and direct V2 -> V3
+migration; valid V3 direct load, import, reload, and saved/unsaved export; derivation and
+correction preservation of `leftoverServing`; absent V3 field meanings; startup migration
+success and failure; exact old-raw preservation after failed migration, import, reset, or
+save writes; initial unsaved state; retry on a later mutation; malformed V1/V2/V3
+recovery; future-version recovery; restriction safety reset; and memory/disk divergence.
+Importer checks cover rejection before
 extraction for invalid signature, file/entry/name/path limits, missing or duplicate
 `recipes.html`, encrypted or unsupported compression, decoded size, malformed records,
 duplicate IDs, bounded output, and unchanged application state on failure. Planner
@@ -446,10 +589,10 @@ intentional leftovers; discriminated guidance/no-eligible results; and both supp
 recipe association directions. Import interaction coverage verifies familiar-by-default
 new meals, persisted unfamiliar opt-in, and version imports preserving target familiarity. App interaction
 coverage verifies that `guidance` and `no-eligible` omit or disable plan confirmation
-and leave the V2 `plans` collection unchanged. Use Testing Library
+and leave the V3 `plans` collection unchanged. Use Testing Library
 for the task's primary interaction flow. After the final task, add one browser smoke
-path for onboarding -> plan -> shop -> cook -> feedback. A broad end-to-end matrix is
-not required.
+path for onboarding -> plan -> shop -> cook -> feedback, including one confirmed replan
+only if it fits that bounded path. A second broad end-to-end matrix is not required.
 
 ## MVP acceptance signals
 
