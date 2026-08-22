@@ -22,6 +22,20 @@ function openShopping(planId = 'plan') {
   fireEvent.change(screen.getByLabelText('Plan for shopping'), { target: { value: planId } })
 }
 
+function openFailedLeftover(multiplier?: 1.5 | 2, recipe = true) {
+  const state = createEmptyAppState()
+  state.meals.push({ id: 'chili', name: 'Chili', active: true, plannedLeftoverDinner: true, ...(recipe && { recipeIds: ['chili-recipe'] }) }, { id: 'soup', name: 'Soup', active: true, recipeIds: ['soup-recipe'] })
+  if (recipe) state.recipes.push({ id: 'chili-recipe', title: 'Chili', mealId: 'chili', ingredients: ['1 cup beans', 'salt to taste'], ...(multiplier && { leftoverQuantityMultiplier: multiplier }) })
+  state.recipes.push({ id: 'soup-recipe', title: 'Soup', mealId: 'soup', ingredients: ['1 cup tomatoes'] })
+  state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'chili', ...(recipe && { recipeId: 'chili-recipe' }), cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T18:00:00.000Z', feedbackEligibleAt: '2026-08-17T18:30:00.000Z' }, { id: 'middle', date: '2026-08-18', mealId: 'soup', recipeId: 'soup-recipe' }, { id: 'dependent', date: '2026-08-19', mealId: 'chili', ...(recipe && { recipeId: 'chili-recipe' }), leftoverFromSlotId: 'source' }], repairRevisions: [{ id: '00000000-0000-0000-0000-000000000001', createdAt: '2026-08-17T00:00:00.000Z', slotId: 'middle', kind: 'takeout', takeoutContext: 'planned' }] } as never)
+  localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
+  const view = render(<App />)
+  fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
+  return view
+}
+
 describe('backup import', () => {
   afterEach(() => {
     localStorage.clear()
@@ -612,6 +626,30 @@ describe('shopping and repair', () => {
     expect(screen.queryByRole('button', { name: 'Confirm repair' })).not.toBeInTheDocument()
   })
 
+  it('preserves first unavailable shopping evidence with no unfinished target', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, recipeIds: ['recipe'] })
+    state.recipes.push({ id: 'recipe', title: 'Tacos', mealId: 'tacos', ingredients: ['1 cup tomatoes'] })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'done', date: '2026-08-17', mealId: 'tacos', recipeId: 'recipe', cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state)); vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />); openShopping(); fireEvent.click(screen.getByLabelText('Unavailable 1 cup tomatoes')); fireEvent.click(screen.getByRole('button', { name: 'Shopping done' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].shopping.items[0]).toMatchObject({ id: 'done:0', availability: 'unavailable', sourceLines: ['1 cup tomatoes'], sourceSlotIds: ['done'] })
+    expect(screen.getByRole('status')).toHaveTextContent('Shopping completion recorded.')
+    expect((screen.getByLabelText('Plan to repair') as HTMLSelectElement).value).toBe('')
+  })
+
+  it('routes an aligned shared unavailable item to all affected slots for review', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'a', name: 'A', active: true, recipeIds: ['ra'] }, { id: 'b', name: 'B', active: true, recipeIds: ['rb'] })
+    state.recipes.push({ id: 'ra', title: 'A', mealId: 'a', ingredients: ['1 cup tomatoes'] }, { id: 'rb', title: 'B', mealId: 'b', ingredients: ['1 cups tomatoes'] })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'a-slot', date: '2026-08-17', mealId: 'a', recipeId: 'ra' }, { id: 'b-slot', date: '2026-08-18', mealId: 'b', recipeId: 'rb' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state)); vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />); openShopping(); fireEvent.click(screen.getByLabelText('Unavailable 2 cups tomatoes')); fireEvent.click(screen.getByRole('button', { name: 'Shopping done' }))
+    expect((screen.getByLabelText('Plan to repair') as HTMLSelectElement).value).toBe('plan')
+    expect((screen.getByLabelText('Date to repair') as HTMLSelectElement).value).toBe('')
+    expect(screen.getAllByRole('button', { name: 'Review needed' })).toHaveLength(2)
+  })
+
   it('links a distinct recovery meal and exposes it to plan repair', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'tacos', name: 'Tacos', active: true }, { id: 'soup', name: 'Soup', active: true })
@@ -657,6 +695,8 @@ describe('shopping and repair', () => {
     openShopping()
     await waitFor(() => expect(screen.getByLabelText('Unavailable 1 cup tomatoes')).toBeChecked())
     expect(screen.getByLabelText('Perishable 1 cup tomatoes')).toBeChecked()
+    expect(screen.getByLabelText('Unavailable 1 cup tomatoes')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Shopping done' })).toBeDisabled()
     first.unmount()
     render(<App />)
     openShopping()
@@ -707,6 +747,67 @@ describe('shopping and repair', () => {
     render(<App />)
     openPlanRepair()
     expect(screen.queryByRole('button', { name: 'Swap with Soup' })).not.toBeInTheDocument()
+  })
+
+  it('keeps failed-leftover recovery to future preferences and saves its 1.5x choice with the dependent replan', () => {
+    openFailedLeftover()
+    expect(screen.getByRole('button', { name: 'Remove leftover planning' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Increase recipe quantity to 1.5x' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Increase recipe quantity to 2x' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Choose takeout' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Increase recipe quantity to 1.5x' }))
+    expect(screen.getByText(/Future recipe preference cannot fix cooked food/)).toBeInTheDocument()
+    expect(screen.getByText(/Manual quantity adjustment/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+    const saved = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    expect(saved.recipes.find((recipe: { id: string }) => recipe.id === 'chili-recipe').leftoverQuantityMultiplier).toBe(1.5)
+    expect(saved.plans[0].slots.find((slot: { id: string }) => slot.id === 'dependent').leftoverFromSlotId).toBeUndefined()
+    expect(saved.meals.find((meal: { id: string }) => meal.id === 'chili').plannedLeftoverDinner).toBe(true)
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-09-01' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    expect(document.querySelector('.weekly-plan-preview')).toHaveTextContent('(planned leftovers)')
+  })
+
+  it.each([[1.5, true, ['Remove leftover planning', 'Increase recipe quantity to 2x']], [2, true, ['Remove leftover planning']], [undefined, false, ['Remove leftover planning']]] as const)('offers only permitted failed-leftover actions for multiplier %s', (multiplier, recipe, choices) => {
+    openFailedLeftover(multiplier, recipe)
+    expect(screen.getAllByRole('button').filter((button) => /leftover planning|Increase recipe quantity/.test(button.textContent ?? '')).map((button) => button.textContent)).toEqual(choices)
+  })
+
+  it('removes leftover planning only when its dependent replan is confirmed', () => {
+    openFailedLeftover()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove leftover planning' }))
+    const before = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    expect(before.meals.find((meal: { id: string }) => meal.id === 'chili').plannedLeftoverDinner).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+    const saved = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    expect(saved.meals.find((meal: { id: string }) => meal.id === 'chili').plannedLeftoverDinner).toBeUndefined()
+    expect(saved.plans[0].slots.find((slot: { id: string }) => slot.id === 'dependent').leftoverFromSlotId).toBeUndefined()
+  })
+
+  it('keeps failed-leftover preview and storage unchanged when its complete candidate is invalid', () => {
+    openFailedLeftover()
+    fireEvent.click(screen.getByRole('button', { name: 'Increase recipe quantity to 1.5x' }))
+    const savedBefore = localStorage.getItem(APP_STATE_STORAGE_KEY)
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-0000-0000-000000000001')
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+    expect(localStorage.getItem(APP_STATE_STORAGE_KEY)).toBe(savedBefore)
+    expect(screen.getByRole('button', { name: 'Confirm repair' })).toBeInTheDocument()
+    expect(screen.getByText(/Future recipe preference cannot fix cooked food/)).toBeInTheDocument()
+    expect(screen.getByRole('status')).not.toHaveTextContent('Plan repair confirmed.')
+  })
+
+  it('reopens persisted failed-leftover recovery after reload and suppresses only its future reservation', () => {
+    const first = openFailedLeftover()
+    first.unmount()
+    render(<App />)
+    expect(screen.getByRole('button', { name: 'Remove leftover planning' })).toBeInTheDocument()
+    expect((screen.getByLabelText('Plan to repair') as HTMLSelectElement).value).toBe('plan')
+    expect((screen.getByLabelText('Date to repair') as HTMLSelectElement).value).toBe('dependent')
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-09-01' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    expect(document.querySelector('.weekly-plan-preview')).not.toHaveTextContent('(planned leftovers)')
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans.at(-1).slots.every((slot: { leftoverFromSlotId?: string }) => slot.leftoverFromSlotId === undefined)).toBe(true)
   })
 
   it('clears a repair preview after another persisted change', () => {

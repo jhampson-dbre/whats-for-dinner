@@ -2,8 +2,8 @@ import { replanRemainingWeek, type ReplanState } from './weeklyPlan'
 
 type Slot = { id: string; date: string; mealId?: string; recipeId?: string; dinnerReadyAt?: string; leftoverFromSlotId?: string; leftoverLotIds?: string[] }
 type Plan = { id: string; confirmed?: boolean; slots: Slot[] }
-export type RepairChoice = { slotId: string; kind: 'simpler' | 'swap' | 'leftovers' | 'recovery' | 'takeout'; swapSlotId?: string; leftoverLotId?: string; adaptationId?: string; mealId?: string; recipeId?: string; reason?: string; takeoutContext?: 'planned' | 'unforeseeable-disruption' | 'predictable-planning-or-acceptance-failure' }
-export type RepairPreview = { plan: Plan; changedSlotIds: string[]; choice: RepairChoice; leftoverLots: ReplanState['leftoverLots']; revisionDrafts: Array<{ slotId: string; kind: RepairChoice['kind'] }>; releasedLotIds: string[]; consumedLotIds: string[]; perishableRisks: Array<{ itemId?: string; sourceSlotId?: string; sourceLine: string }> }
+export type RepairChoice = { slotId: string; kind: 'simpler' | 'swap' | 'leftovers' | 'recovery' | 'takeout' | 'replan'; swapSlotId?: string; leftoverLotId?: string; adaptationId?: string; mealId?: string; recipeId?: string; reason?: string; takeoutContext?: 'planned' | 'unforeseeable-disruption' | 'predictable-planning-or-acceptance-failure' }
+export type RepairPreview = { plan: Plan; changedSlotIds: string[]; choice: RepairChoice; leftoverLots: ReplanState['leftoverLots']; revisionDrafts: Array<{ slotId: string; kind: Exclude<RepairChoice['kind'], 'replan'> }>; releasedLotIds: string[]; consumedLotIds: string[]; perishableRisks: Array<{ itemId?: string; sourceSlotId?: string; sourceLine: string }> }
 
 export function previewRepair(state: ReplanState, plan: Plan, choice: RepairChoice): RepairPreview {
   const slot = plan.slots.find((item) => item.id === choice.slotId)

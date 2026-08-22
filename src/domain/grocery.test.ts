@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildGroceryList } from './grocery'
+import { buildGroceryList, unavailableShoppingTargets } from './grocery'
 
 describe('buildGroceryList', () => {
   it('uses the selected confirmed plan, merges direct unit aliases, retains source lines, and exposes incomplete meals', () => {
@@ -41,5 +41,22 @@ describe('buildGroceryList', () => {
 
     expect(buildGroceryList(state, 'missing').items).toEqual([])
     expect(buildGroceryList(state, 'draft').items).toEqual([])
+  })
+
+  it('targets every unfinished aligned source, and conservatively falls back when provenance is stale', () => {
+    const state = { meals: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], recipes: [{ id: 'ra', mealId: 'a', ingredients: ['1 cup tomatoes'] }, { id: 'rb', mealId: 'b', ingredients: ['1 cups tomatoes'] }], plans: [{ id: 'plan', confirmed: true, slots: [{ id: 'a-slot', date: '2026-08-17', mealId: 'a', recipeId: 'ra' }, { id: 'b-slot', date: '2026-08-18', mealId: 'b', recipeId: 'rb' }] }] }
+    const item = { availability: 'unavailable', sourceLines: ['1 cup tomatoes', '1 cups tomatoes'], sourceSlotIds: ['a-slot', 'b-slot'] }
+    expect(unavailableShoppingTargets(state, 'plan', item)).toEqual(['a-slot', 'b-slot'])
+    expect(unavailableShoppingTargets(state, 'plan', { ...item, sourceSlotIds: ['missing'] })).toEqual(['a-slot', 'b-slot'])
+  })
+
+  it('uses legacy exact raw-line matching but never targets a completed slot', () => {
+    const state = { meals: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], recipes: [{ id: 'ra', mealId: 'a', ingredients: ['salt to taste'] }, { id: 'rb', mealId: 'b', ingredients: ['  SALT   TO taste '] }], plans: [{ id: 'plan', confirmed: true, slots: [{ id: 'done', date: '2026-08-17', mealId: 'a', recipeId: 'ra', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }, { id: 'open', date: '2026-08-18', mealId: 'b', recipeId: 'rb' }] }] }
+    expect(unavailableShoppingTargets(state, 'plan', { availability: 'unavailable', sourceLines: ['salt to taste'] })).toEqual(['open'])
+  })
+
+  it('scales only parsed known-unit quantities and marks each unchanged raw row', () => {
+    const list = buildGroceryList({ meals: [{ id: 'meal', name: 'Meal' }], recipes: [{ id: 'recipe', mealId: 'meal', leftoverQuantityMultiplier: 1.5 as const, ingredients: ['1.2 cups beans', 'salt to taste'] }], plans: [{ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'meal', recipeId: 'recipe' }] }] }, 'plan')
+    expect(list.items).toEqual(expect.arrayContaining([expect.objectContaining({ label: '1.8 cups beans' }), expect.objectContaining({ label: 'salt to taste', manualQuantityAdjustment: true })]))
   })
 })

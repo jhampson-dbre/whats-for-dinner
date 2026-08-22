@@ -10,7 +10,7 @@ import {
 import { appStateV3Schema, type AppStateV3 } from './state/schema'
 import { mealEligibility } from './domain/mealEligibility'
 import { buildWeeklyPlan } from './domain/weeklyPlan'
-import { buildGroceryList } from './domain/grocery'
+import { buildGroceryList, unavailableShoppingTargets } from './domain/grocery'
 import { adaptSharedMeal, missingLeftoverDependencies, previewRepair, type RepairPreview } from './domain/repair'
 import { classifyRecovery, correctedOutcomes, householdAcceptance, type NeutralReason } from './domain/outcomes'
 import { readRecipeKeeperZip, type RecipeKeeperCandidate } from './import/recipeKeeper'
@@ -25,6 +25,21 @@ function reducer(_state: AppStateV3, action: Action): AppStateV3 {
 
 function leftoverConsumer(slot: { leftoverFromSlotId?: string; leftoverLotIds?: string[] }): boolean {
   return Boolean(slot.leftoverFromSlotId || slot.leftoverLotIds?.length)
+}
+
+function unresolvedFailedLeftover(state: AppStateV3): { planId: string; sourceSlotId: string; dependentSlotId: string; mealId?: string } | undefined {
+  for (const outcome of correctedOutcomes(state.outcomes).slice().reverse()) {
+    if (outcome.leftoverCoverage !== 'none' && outcome.leftoverCoverage !== 'some') continue
+    const plan = state.plans.find((candidate) => candidate.id === outcome.planId && candidate.confirmed)
+    const source = plan?.slots.find((slot) => slot.id === outcome.planSlotId)
+    const dependent = plan?.slots.find((slot) => slot.leftoverFromSlotId === source?.id && !slot.dinnerReadyAt)
+    if (plan && source && dependent) return { planId: plan.id, sourceSlotId: source.id, dependentSlotId: dependent.id, mealId: source.mealId }
+  }
+}
+
+function withoutUnresolvedLeftoverReservations(state: AppStateV3): AppStateV3 {
+  const unresolved = unresolvedFailedLeftover(state)
+  return unresolved?.mealId ? { ...state, meals: state.meals.map((meal) => meal.id === unresolved.mealId ? { ...meal, plannedLeftoverDinner: undefined } : meal) } : state
 }
 
 function shoppingControls(state: AppStateV3, planId: string) {
@@ -104,6 +119,7 @@ export default function App() {
 }
 
 function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppStateV3; initialUnsaved?: boolean }) {
+  const initialFailedLeftover = unresolvedFailedLeftover(initialState)
   const [state, dispatch] = useReducer(reducer, initialState)
   const [initialShoppingControls] = useState(() => shoppingControls(initialState, ''))
   const [saveStatus, setSaveStatus] = useState<'saved' | 'unsaved'>(initialUnsaved ? 'unsaved' : 'saved')
@@ -133,7 +149,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
   const [perishableItems, setPerishableItems] = useState<Set<string>>(() => initialShoppingControls.perishable)
   const [skippedIncompleteMeals, setSkippedIncompleteMeals] = useState<Set<string>>(() => initialShoppingControls.skippedIncompleteMeals)
   const [perishableAcknowledged, setPerishableAcknowledged] = useState(false)
-  const [repairOpen, setRepairOpen] = useState(false)
+  const [repairOpen, setRepairOpen] = useState(Boolean(initialFailedLeftover))
   const [repairPreview, setRepairPreview] = useState<RepairPreview>()
   const [adaptationMealId, setAdaptationMealId] = useState('')
   const [adaptationDinerId, setAdaptationDinerId] = useState('')
@@ -145,11 +161,12 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
   const [takeoutContext, setTakeoutContext] = useState<'planned' | 'unforeseeable-disruption' | 'predictable-planning-or-acceptance-failure'>('planned')
   const [feedbackTarget, setFeedbackTarget] = useState<{ planId: string; slotId: string }>()
   const [feedbackCorrectionId, setFeedbackCorrectionId] = useState<string>()
+  const [failedLeftover, setFailedLeftover] = useState<{ sourceSlotId: string; multiplier?: 1.5 | 2; remove?: true } | undefined>(() => initialFailedLeftover && { sourceSlotId: initialFailedLeftover.sourceSlotId })
   const [personFeedback, setPersonFeedback] = useState<Record<string, FeedbackChoice>>({})
   const [leftoverCoverage, setLeftoverCoverage] = useState<'none' | 'some' | 'one' | 'more-than-one'>('none')
   const [activeEffortMinutes, setActiveEffortMinutes] = useState('')
-  const [repairPlanId, setRepairPlanId] = useState('')
-  const [repairSlotId, setRepairSlotId] = useState<string>()
+  const [repairPlanId, setRepairPlanId] = useState(() => initialFailedLeftover?.planId ?? '')
+  const [repairSlotId, setRepairSlotId] = useState<string | undefined>(() => initialFailedLeftover?.dependentSlotId)
   const [reviewNeeded, setReviewNeeded] = useState<Set<string>>(() => new Set())
 
   const commit = (next: AppStateV3, markReview = true) => {
@@ -214,20 +231,20 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     if (!planStartDate) { setWeeklyPreview(undefined); setMessage('Choose a week-start date first.'); return }
     setOptionalAction('fallback')
     setPlannedTakeoutDates([])
-    setWeeklyPreview(buildWeeklyPlan(state, planStartDate))
+    setWeeklyPreview(buildWeeklyPlan(withoutUnresolvedLeftoverReservations(state), planStartDate))
   }
   const chooseOptionalMeal = (action: 'use' | 'adapt' | 'reject') => {
     setOptionalAction(action)
-    setWeeklyPreview(buildWeeklyPlan(state, planStartDate, action, plannedTakeoutDates))
+    setWeeklyPreview(buildWeeklyPlan(withoutUnresolvedLeftoverReservations(state), planStartDate, action, plannedTakeoutDates))
   }
   const togglePlannedTakeout = (date: string) => {
     const dates = plannedTakeoutDates.includes(date) ? plannedTakeoutDates.filter((item) => item !== date) : [...plannedTakeoutDates, date]
     setPlannedTakeoutDates(dates)
-    setWeeklyPreview(buildWeeklyPlan(state, planStartDate, optionalAction, dates))
+    setWeeklyPreview(buildWeeklyPlan(withoutUnresolvedLeftoverReservations(state), planStartDate, optionalAction, dates))
   }
   const confirmWeeklyPlan = () => {
     if (!weeklyPreview || weeklyPreview.kind !== 'plan' || state.plans.length >= 100) return
-    const verified = buildWeeklyPlan(state, planStartDate, optionalAction, plannedTakeoutDates)
+    const verified = buildWeeklyPlan(withoutUnresolvedLeftoverReservations(state), planStartDate, optionalAction, plannedTakeoutDates)
     if (verified.kind !== 'plan') { setWeeklyPreview(verified); return }
     const overlaps = state.plans.filter((plan) => plan.confirmed).flatMap((plan) => plan.slots.filter((slot) => !slot.dinnerReadyAt && verified.slots.some((preview) => preview.date === slot.date)).map((slot) => ({ plan, slot })))
     if (overlaps.length) { setRepairPlanId(''); setRepairSlotId(undefined); setRepairOpen(false); setWeeklyPreview(undefined); setMessage('Choose the overlapping confirmed plan and unfinished date explicitly before confirming a new plan.'); return }
@@ -309,16 +326,18 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
   const repairTarget = repairPlan?.slots.find((slot) => slot.id === repairSlotId && !slot.dinnerReadyAt)
   const repairGroceryChanges = repairPreview && repairPlan ? (() => {
     const before = buildGroceryList(state, repairPlan.id).items.map((item) => item.label)
-    const after = buildGroceryList({ ...state, plans: state.plans.map((plan) => plan.id === repairPlan.id ? repairPreview.plan : plan) }, repairPlan.id).items.map((item) => item.label)
-    return { added: after.filter((item) => !before.includes(item)), removed: before.filter((item) => !after.includes(item)) }
+    const after = buildGroceryList({ ...state, recipes: failedLeftover?.multiplier ? state.recipes.map((recipe) => recipe.id === repairPlan.slots.find((slot) => slot.id === failedLeftover.sourceSlotId)?.recipeId ? { ...recipe, leftoverQuantityMultiplier: failedLeftover.multiplier } : recipe) : state.recipes, plans: state.plans.map((plan) => plan.id === repairPlan.id ? repairPreview.plan : plan) }, repairPlan.id).items
+    return { added: after.filter((item) => !before.includes(item.label)).map((item) => `${item.label}${item.manualQuantityAdjustment ? ' (Manual quantity adjustment)' : ''}`), removed: before.filter((item) => !after.some((candidate) => candidate.label === item)), manual: after.filter((item) => item.manualQuantityAdjustment).map((item) => item.label) }
   })() : undefined
   const repairMeal = state.meals.find((meal) => meal.id === repairTarget?.mealId)
   const repairSlotHasLeftoverLink = (slotId: string) => {
     const slot = repairPlan?.slots.find((item) => item.id === slotId)
     return Boolean(slot?.leftoverFromSlotId || slot?.leftoverLotIds?.length || repairPlan?.slots.some((item) => !item.dinnerReadyAt && item.leftoverFromSlotId === slotId))
   }
-  const showRepair = (kind: 'simpler' | 'swap' | 'leftovers' | 'recovery' | 'takeout', mealId?: string, recipeId?: string, swapSlotId?: string, leftoverLotId?: string, adaptationId?: string) => {
+  const showRepair = (kind: 'simpler' | 'swap' | 'leftovers' | 'recovery' | 'takeout' | 'replan', mealId?: string, recipeId?: string, swapSlotId?: string, leftoverLotId?: string, adaptationId?: string) => {
     if (!repairPlan || !repairTarget) return
+    if (failedLeftover && !repairPlan.slots.some((slot) => slot.id === failedLeftover.sourceSlotId)) setFailedLeftover(undefined)
+    else if (failedLeftover && kind !== 'replan') return
     setPerishableAcknowledged(false)
     try { setRepairPreview(previewRepair(state, repairPlan, { slotId: repairTarget.id, kind, ...(mealId && { mealId }), ...(recipeId && { recipeId }), ...(swapSlotId && { swapSlotId }), ...(leftoverLotId && { leftoverLotId }), ...(adaptationId && { adaptationId }), ...(kind === 'takeout' && { takeoutContext }) })) }
     catch (error) { setRepairPreview(undefined); setMessage(error instanceof Error ? error.message : 'That repair is no longer valid.') }
@@ -329,14 +348,14 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     let verified: RepairPreview
     try { verified = previewRepair(state, repairPlan, repairPreview.choice) }
     catch { setRepairPreview(undefined); setMessage('Plan changes invalidated this preview. Review the options again.'); return }
-    const targetMealRemoved = repairTarget.mealId !== undefined && !verified.plan.slots.some((slot) => slot.mealId === repairTarget.mealId)
-    const perishableRisk = targetMealRemoved && repairPlan.shopping?.items.some((item) => item.availability === 'available' && item.perishable && item.mealIds.includes(repairTarget.mealId ?? ''))
+    const perishableRisk = verified.perishableRisks.length > 0
     if (perishableRisk && !perishableAcknowledged) { setMessage('Acknowledge the confirmed perishable groceries before replacing this meal.'); return }
     if (!window.confirm('Apply this repair?')) return
-    const next: AppStateV3 = { ...state, plans: state.plans.map((plan) => plan.id !== verified.plan.id ? plan : { ...verified.plan, repairRevisions: [...(plan.repairRevisions ?? []), ...verified.revisionDrafts.map((draft) => ({ id: crypto.randomUUID(), createdAt: new Date().toISOString(), slotId: draft.slotId, kind: draft.kind, ...(perishableRisk && { perishableDisposition: 'acknowledged-preservation-risk' as const }), ...(verified.choice.leftoverLotId && { leftoverLotId: verified.choice.leftoverLotId }), ...(verified.choice.adaptationId && { adaptationId: verified.choice.adaptationId }), ...(draft.kind === 'recovery' && verified.choice.kind !== 'recovery' && { reason: 'replan' }), ...(verified.choice.reason && { reason: verified.choice.reason }), ...(verified.choice.takeoutContext && { takeoutContext: verified.choice.takeoutContext }) }))] }), leftoverLots: verified.leftoverLots }
-    if (!appStateV3Schema.safeParse(next).success) { commit(next, false); return }
+    const sourceRecipeId = failedLeftover && repairPlan.slots.find((slot) => slot.id === failedLeftover.sourceSlotId)?.recipeId
+    const next: AppStateV3 = { ...state, recipes: failedLeftover?.multiplier ? state.recipes.map((recipe) => recipe.id === sourceRecipeId ? { ...recipe, leftoverQuantityMultiplier: failedLeftover.multiplier } : recipe) as AppStateV3['recipes'] : state.recipes, meals: failedLeftover?.remove ? state.meals.map((meal) => meal.id === repairPlan.slots.find((slot) => slot.id === failedLeftover.sourceSlotId)?.mealId ? { ...meal, plannedLeftoverDinner: undefined } : meal) : state.meals, plans: state.plans.map((plan) => plan.id !== verified.plan.id ? plan : { ...verified.plan, repairRevisions: [...(plan.repairRevisions ?? []), ...verified.revisionDrafts.map((draft) => ({ id: crypto.randomUUID(), createdAt: new Date().toISOString(), slotId: draft.slotId, kind: draft.kind, ...(perishableRisk && { perishableDisposition: 'acknowledged-preservation-risk' as const }), ...(verified.choice.leftoverLotId && { leftoverLotId: verified.choice.leftoverLotId }), ...(verified.choice.adaptationId && { adaptationId: verified.choice.adaptationId }), ...(draft.kind === 'recovery' && verified.choice.kind !== 'recovery' && { reason: 'replan' }), ...(verified.choice.reason && { reason: verified.choice.reason }), ...(verified.choice.takeoutContext && { takeoutContext: verified.choice.takeoutContext }) }))] }), leftoverLots: verified.leftoverLots }
+    if (!appStateV3Schema.safeParse(next).success) { setMessage('Changes are invalid and were not applied.'); return }
     commit(next, false)
-    setRepairPreview(undefined); setRepairOpen(false); setReviewNeeded((notices) => { const next = new Set(notices); verified.changedSlotIds.forEach((slotId) => next.delete(`${repairPlan.id}:${slotId}`)); return next }); setMessage('Plan repair confirmed.')
+    setRepairPreview(undefined); setRepairOpen(false); setFailedLeftover(undefined); setReviewNeeded((notices) => { const next = new Set(notices); verified.changedSlotIds.forEach((slotId) => next.delete(`${repairPlan.id}:${slotId}`)); return next }); setMessage('Plan repair confirmed.')
   }
   const saveAdaptation = () => {
     const result = adaptSharedMeal({ dinerId: adaptationDinerId, issue: adaptationIssue.trim(), name: adaptationName.trim(), solvesIssue: adaptationChecks.solvesIssue, coordinatedCooking: adaptationChecks.coordinatedCooking, secondEntree: !adaptationChecks.noSecondEntree, unplannedProtein: !adaptationChecks.noUnplannedProtein, separateTimeline: !adaptationChecks.noSeparateTimeline, extraEffort: !adaptationChecks.noExtraEffort })
@@ -373,7 +392,19 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     const dependentIds = leftoverCoverage !== 'one' && leftoverCoverage !== 'more-than-one' ? missingLeftoverDependencies(feedbackPlan, feedbackSlot.id) : []
     update((current) => ({ ...current, outcomes: [...current.outcomes, outcome], leftoverLots: [...current.leftoverLots.map((lot) => feedbackCorrectionId && lot.sourcePlanId === feedbackPlan.id && lot.sourceSlotId === feedbackSlot.id ? { ...lot, active: false } : lot), ...(leftoverCoverage === 'one' || leftoverCoverage === 'more-than-one') && current.leftoverLots.length < 500 ? [{ id: crypto.randomUUID(), sourcePlanId: feedbackPlan.id, sourceSlotId: feedbackSlot.id, ...(feedbackSlot.mealId && { sourceMealId: feedbackSlot.mealId }), dinnerCoverage: leftoverCoverage, active: true }] : []], plans: current.plans.map((plan) => plan.id !== feedbackPlan.id ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id === feedbackSlot.id ? { ...slot, feedbackDismissed: true } : slot) }) }))
     setFeedbackTarget(undefined); setFeedbackCorrectionId(undefined); setPersonFeedback({}); setLeftoverCoverage('none'); setActiveEffortMinutes('')
-    if (dependentIds[0]) { setRepairPlanId(feedbackPlan.id); setRepairSlotId(dependentIds[0]); setRepairOpen(true); setMessage('Expected leftovers are insufficient. Choose and confirm the smallest repair.') } else setMessage('Dinner feedback recorded.')
+    if (dependentIds[0]) { setRepairPlanId(feedbackPlan.id); setRepairSlotId(dependentIds[0]); setRepairOpen(true); setFailedLeftover({ sourceSlotId: feedbackSlot.id }); setMessage('Expected leftovers are insufficient. Choose and confirm the smallest repair.') } else setMessage('Dinner feedback recorded.')
+  }
+  const confirmShopping = () => {
+    if (!shoppingPlan || shoppingPlan.shopping || !groceries || !window.confirm('Record shopping completion?')) return
+    const next: AppStateV3 = { ...state, plans: state.plans.map((plan) => plan.id !== shoppingPlan.id ? plan : { ...plan, shopping: { confirmedAt: new Date().toISOString(), partial: groceries.incompleteMeals.length > 0, skippedIncompleteMealIds: [...skippedIncompleteMeals], items: groceries.items.map((item) => ({ id: item.id, label: item.label, sourceLines: item.sourceLines, sourceSlotIds: item.sourceSlotIds, mealIds: item.mealIds, perishable: perishableItems.has(item.id), availability: unavailableItems.has(item.id) ? 'unavailable' : skippedItems.has(item.id) ? 'skipped' : 'available' })) } }) }
+    const confirmed = next.plans.find((plan) => plan.id === shoppingPlan.id)!
+    const targets = [...new Set(confirmed.shopping!.items.flatMap((item) => unavailableShoppingTargets(next, confirmed.id, item)))]
+    if (!appStateV3Schema.safeParse(next).success) { setMessage('Changes are invalid and were not applied.'); return }
+    commit(next, false)
+    setReviewNeeded((notices) => new Set([...notices, ...targets.map((slotId) => `${confirmed.id}:${slotId}`)]))
+    if (targets.length === 1) { setRepairPlanId(confirmed.id); setRepairSlotId(targets[0]); setRepairOpen(true); setMessage('Unavailable ingredients need a confirmed repair.') }
+    else if (targets.length > 1) { setRepairPlanId(confirmed.id); setRepairSlotId(undefined); setRepairOpen(false); setMessage('Unavailable ingredients need review; choose an affected date.') }
+    else setMessage('Shopping completion recorded.')
   }
 
   return (
@@ -433,20 +464,24 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
         <label>Plan for shopping<select aria-label="Plan for shopping" value={shoppingPlanId} onChange={(event) => { setShoppingPlanId(event.target.value); hydrateShoppingControls(state, event.target.value); setRepairPreview(undefined) }}><option value="">Choose a confirmed plan</option>{state.plans.filter((plan) => plan.confirmed).map((plan) => <option key={plan.id} value={plan.id}>{plan.id}</option>)}</select></label>
         {shoppingPlan && groceries && <>
         {groceries.incompleteMeals.length > 0 && <p>Shopping list is incomplete: {groceries.incompleteMeals.map((meal) => meal.mealName).join(', ')}.</p>}
+        <fieldset disabled={Boolean(shoppingPlan.shopping)}><legend>Shopping availability</legend>
         {shoppingPlan.shopping?.partial && <p>This saved shopping record is partial.</p>}
         {groceries.incompleteMeals.map((meal) => <label key={meal.mealId}><input aria-label={`Ingredients unavailable or skipped for ${meal.mealName}`} type="checkbox" checked={skippedIncompleteMeals.has(meal.mealId)} onChange={(event) => { setRepairPreview(undefined); setSkippedIncompleteMeals((current) => { const next = new Set(current); if (event.target.checked) next.add(meal.mealId); else next.delete(meal.mealId); return next }) }} /> Ingredients unavailable/skipped for {meal.mealName}</label>)}
         <ul>{groceries.items.map((item) => <li key={item.id}><label><input aria-label={`Unavailable ${item.label}`} type="checkbox" checked={unavailableItems.has(item.id)} onChange={(event) => { setRepairPreview(undefined); setUnavailableItems((current) => { const next = new Set(current); if (event.target.checked) { next.add(item.id); setSkippedItems((skipped) => { const nextSkipped = new Set(skipped); nextSkipped.delete(item.id); return nextSkipped }) } else next.delete(item.id); return next }) }} /> {item.label}</label><label><input aria-label={`Skip ${item.label}`} type="checkbox" checked={skippedItems.has(item.id)} onChange={(event) => { setRepairPreview(undefined); setSkippedItems((current) => { const next = new Set(current); if (event.target.checked) { next.add(item.id); setUnavailableItems((unavailable) => { const nextUnavailable = new Set(unavailable); nextUnavailable.delete(item.id); return nextUnavailable }) } else next.delete(item.id); return next }) }} /> Skip</label><label><input aria-label={`Perishable ${item.label}`} type="checkbox" checked={perishableItems.has(item.id)} onChange={(event) => { setRepairPreview(undefined); setPerishableItems((current) => { const next = new Set(current); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next }) }} /> Perishable</label><small> Sources: {item.sourceLines.join('; ')}</small></li>)}</ul>
-        <button disabled={groceries.incompleteMeals.some((meal) => !skippedIncompleteMeals.has(meal.mealId))} onClick={() => { if (!window.confirm('Record shopping completion?')) return; update((current) => ({ ...current, plans: current.plans.map((plan) => plan.id !== shoppingPlan.id ? plan : { ...plan, shopping: { confirmedAt: new Date().toISOString(), partial: groceries.incompleteMeals.length > 0, skippedIncompleteMealIds: [...skippedIncompleteMeals], items: groceries.items.map((item) => ({ ...(shoppingPlan.shopping?.items.find((saved) => saved.id === item.id) ?? { sourceSlotIds: item.sourceSlotIds }), id: item.id, label: item.label, sourceLines: item.sourceLines, mealIds: item.mealIds, perishable: perishableItems.has(item.id), availability: unavailableItems.has(item.id) ? 'unavailable' : skippedItems.has(item.id) ? 'skipped' : 'available' })) } }) })); setMessage('Shopping completion recorded.') }}>Shopping done</button>
+        {groceries.items.some((item) => item.manualQuantityAdjustment) && <p>Manual quantity adjustment: unparsed ingredient quantities were not scaled.</p>}
+        <button disabled={groceries.incompleteMeals.some((meal) => !skippedIncompleteMeals.has(meal.mealId))} onClick={confirmShopping}>Shopping done</button>
+        </fieldset>
         </>}
       </section>}
       {state.plans.some((plan) => plan.confirmed) && <section aria-labelledby="repair-heading">
         <h2 id="repair-heading">Plan repair</h2>
-        <label>Plan to repair<select aria-label="Plan to repair" value={repairPlanId} onChange={(event) => { setRepairPlanId(event.target.value); setRepairSlotId(undefined); setRepairOpen(false); setRepairPreview(undefined) }}><option value="">Choose a plan</option>{state.plans.filter((plan) => plan.confirmed).map((plan) => <option key={plan.id} value={plan.id}>{plan.id}</option>)}</select></label>
-        <label>Date to repair<select aria-label="Date to repair" value={repairSlotId ?? ''} disabled={!repairPlan} onChange={(event) => { setRepairSlotId(event.target.value || undefined); setRepairOpen(false); setRepairPreview(undefined) }}><option value="">Choose an unfinished date</option>{repairPlan?.slots.filter((slot) => !slot.dinnerReadyAt).map((slot) => <option key={slot.id} value={slot.id}>{slot.date}</option>)}</select></label>
-        <button disabled={!repairTarget} onClick={() => { setRepairOpen(true); setRepairPreview(undefined) }}>Plans changed</button>
+        <label>Plan to repair<select aria-label="Plan to repair" value={repairPlanId} onChange={(event) => { setFailedLeftover(undefined); setRepairPlanId(event.target.value); setRepairSlotId(undefined); setRepairOpen(false); setRepairPreview(undefined) }}><option value="">Choose a plan</option>{state.plans.filter((plan) => plan.confirmed).map((plan) => <option key={plan.id} value={plan.id}>{plan.id}</option>)}</select></label>
+        <label>Date to repair<select aria-label="Date to repair" value={repairSlotId ?? ''} disabled={!repairPlan} onChange={(event) => { setFailedLeftover(undefined); setRepairSlotId(event.target.value || undefined); setRepairOpen(false); setRepairPreview(undefined) }}><option value="">Choose an unfinished date</option>{repairPlan?.slots.filter((slot) => !slot.dinnerReadyAt).map((slot) => <option key={slot.id} value={slot.id}>{slot.date}</option>)}</select></label>
+        <button disabled={!repairTarget} onClick={() => { setFailedLeftover(undefined); setRepairOpen(true); setRepairPreview(undefined) }}>Plans changed</button>
         {repairOpen && repairTarget && <div className="repair-options"><button onClick={() => setRepairPreview(undefined)}>Just show me options</button><p>Choose one whole-household option for {state.meals.find((meal) => meal.id === repairTarget.mealId)?.name}.</p>
-          <p className="actions">{!leftoverConsumer(repairTarget) && repairMeal?.adaptations?.filter((adaptation) => adaptation.solvesIssue && adaptation.coordinatedCooking && adaptation.noSecondEntree && adaptation.noUnplannedProtein && adaptation.noSeparateTimeline && adaptation.noExtraEffort && adaptation.recipeId && adaptation.recipeId !== repairTarget.recipeId && state.recipes.some((recipe) => recipe.id === adaptation.recipeId && (recipe.mealId === repairTarget.mealId || repairMeal.recipeIds?.includes(recipe.id)))).map((adaptation) => <button key={adaptation.id} onClick={() => showRepair('simpler', repairTarget.mealId, adaptation.recipeId, undefined, undefined, adaptation.id)}>Use {adaptation.name}</button>)}{!repairSlotHasLeftoverLink(repairTarget.id) && repairPlan!.slots.filter((slot) => slot.id !== repairTarget.id && slot.mealId && !slot.dinnerReadyAt && !repairSlotHasLeftoverLink(slot.id)).map((slot) => <button key={slot.id} onClick={() => showRepair('swap', undefined, undefined, slot.id)}>Swap with {state.meals.find((meal) => meal.id === slot.mealId)?.name}</button>)}{state.leftoverLots.filter((lot) => lot.active !== false && (lot.dinnerCoverage === 'one' || lot.dinnerCoverage === 'more-than-one') && lot.sourceMealId).map((lot) => <button key={lot.id} onClick={() => showRepair('leftovers', lot.sourceMealId, undefined, undefined, lot.id)}>Use confirmed leftovers</button>)}{repairMeal?.recoveryMealIds?.map((mealId) => <button key={mealId} onClick={() => showRepair('recovery', mealId)}>Use recovery {state.meals.find((meal) => meal.id === mealId)?.name}</button>)}<label>Takeout context<select value={takeoutContext} onChange={(event) => setTakeoutContext(event.target.value as typeof takeoutContext)}><option value="planned">Planned</option><option value="unforeseeable-disruption">Unforeseeable disruption</option><option value="predictable-planning-or-acceptance-failure">Predictable planning or acceptance failure</option></select></label><button onClick={() => showRepair('takeout')}>Choose takeout</button></p>
-          {repairPreview && <div><p>Repair preview: {repairPreview.choice.adaptationId ? `${state.meals.find((meal) => meal.id === repairTarget.mealId)?.name} uses ${repairMeal?.adaptations?.find((adaptation) => adaptation.id === repairPreview.choice.adaptationId)?.name}` : `${state.meals.find((meal) => meal.id === repairTarget.mealId)?.name} becomes ${repairPreview.choice.kind === 'takeout' ? 'takeout' : state.meals.find((meal) => meal.id === repairPreview.plan.slots.find((slot) => slot.id === repairTarget.id)?.mealId)?.name}`}. Unaffected days stay unchanged.</p>{repairPreview.changedSlotIds.length > 0 && <ul>{repairPreview.changedSlotIds.map((slotId) => { const before = repairPlan?.slots.find((slot) => slot.id === slotId); const after = repairPreview.plan.slots.find((slot) => slot.id === slotId); return <li key={slotId}>{before?.date}: {state.meals.find((meal) => meal.id === before?.mealId)?.name ?? 'Takeout'} → {state.meals.find((meal) => meal.id === after?.mealId)?.name ?? 'Takeout'}{before?.leftoverFromSlotId !== after?.leftoverFromSlotId && ' (planned leftover dependency changed)'}{JSON.stringify(before?.leftoverLotIds ?? []) !== JSON.stringify(after?.leftoverLotIds ?? []) && ` (confirmed leftover lots: ${(before?.leftoverLotIds ?? []).join(', ') || 'none'} → ${(after?.leftoverLotIds ?? []).join(', ') || 'none'})`}</li> })}</ul>}{repairPreview.consumedLotIds.length > 0 && <p>Confirmed leftover lots consumed: {repairPreview.consumedLotIds.join(', ')}.</p>}{repairPreview.releasedLotIds.length > 0 && <p>Confirmed leftover lots released: {repairPreview.releasedLotIds.join(', ')}.</p>}{repairGroceryChanges && <p>Grocery changes: {repairGroceryChanges.added.length ? `add ${repairGroceryChanges.added.join(', ')}` : 'no additions'}; {repairGroceryChanges.removed.length ? `remove ${repairGroceryChanges.removed.join(', ')}` : 'no removals'}.</p>}{repairTarget.mealId !== undefined && !repairPreview.plan.slots.some((slot) => slot.mealId === repairTarget.mealId) && repairPlan?.shopping?.items.some((item) => item.availability === 'available' && item.perishable && item.mealIds.includes(repairTarget.mealId ?? '')) && <label><input aria-label="Acknowledge perishable grocery risk" type="checkbox" checked={perishableAcknowledged} onChange={(event) => setPerishableAcknowledged(event.target.checked)} /> I understand this replaces meals with confirmed perishables.</label>}<button onClick={confirmRepair}>Confirm repair</button></div>}
+          {failedLeftover && (() => { const source = repairPlan?.slots.find((slot) => slot.id === failedLeftover.sourceSlotId); const recipe = state.recipes.find((item) => item.id === source?.recipeId) as (typeof state.recipes[number] & { leftoverQuantityMultiplier?: 1.5 | 2 }) | undefined; const multiplier = recipe?.leftoverQuantityMultiplier; return <p className="actions"><button onClick={() => { setFailedLeftover({ sourceSlotId: failedLeftover.sourceSlotId, remove: true }); showRepair('replan') }}>Remove leftover planning</button>{recipe && multiplier === undefined && <button onClick={() => { setFailedLeftover({ sourceSlotId: failedLeftover.sourceSlotId, multiplier: 1.5 }); showRepair('replan') }}>Increase recipe quantity to 1.5x</button>}{recipe && multiplier !== 2 && <button onClick={() => { setFailedLeftover({ sourceSlotId: failedLeftover.sourceSlotId, multiplier: 2 }); showRepair('replan') }}>Increase recipe quantity to 2x</button>}</p> })()}
+          {!failedLeftover && <p className="actions">{!leftoverConsumer(repairTarget) && repairMeal?.adaptations?.filter((adaptation) => adaptation.solvesIssue && adaptation.coordinatedCooking && adaptation.noSecondEntree && adaptation.noUnplannedProtein && adaptation.noSeparateTimeline && adaptation.noExtraEffort && adaptation.recipeId && adaptation.recipeId !== repairTarget.recipeId && state.recipes.some((recipe) => recipe.id === adaptation.recipeId && (recipe.mealId === repairTarget.mealId || repairMeal.recipeIds?.includes(recipe.id)))).map((adaptation) => <button key={adaptation.id} onClick={() => showRepair('simpler', repairTarget.mealId, adaptation.recipeId, undefined, undefined, adaptation.id)}>Use {adaptation.name}</button>)}{!repairSlotHasLeftoverLink(repairTarget.id) && repairPlan!.slots.filter((slot) => slot.id !== repairTarget.id && slot.mealId && !slot.dinnerReadyAt && !repairSlotHasLeftoverLink(slot.id)).map((slot) => <button key={slot.id} onClick={() => showRepair('swap', undefined, undefined, slot.id)}>Swap with {state.meals.find((meal) => meal.id === slot.mealId)?.name}</button>)}{state.leftoverLots.filter((lot) => lot.active !== false && (lot.dinnerCoverage === 'one' || lot.dinnerCoverage === 'more-than-one') && lot.sourceMealId).map((lot) => <button key={lot.id} onClick={() => showRepair('leftovers', lot.sourceMealId, undefined, undefined, lot.id)}>Use confirmed leftovers</button>)}{repairMeal?.recoveryMealIds?.map((mealId) => <button key={mealId} onClick={() => showRepair('recovery', mealId)}>Use recovery {state.meals.find((meal) => meal.id === mealId)?.name}</button>)}<label>Takeout context<select value={takeoutContext} onChange={(event) => setTakeoutContext(event.target.value as typeof takeoutContext)}><option value="planned">Planned</option><option value="unforeseeable-disruption">Unforeseeable disruption</option><option value="predictable-planning-or-acceptance-failure">Predictable planning or acceptance failure</option></select></label><button onClick={() => showRepair('takeout')}>Choose takeout</button></p>}
+          {repairPreview && <div>{failedLeftover && <p>Future recipe preference cannot fix cooked food; the dependent dinner is being replanned.</p>}<p>Repair preview: {repairPreview.choice.adaptationId ? `${state.meals.find((meal) => meal.id === repairTarget.mealId)?.name} uses ${repairMeal?.adaptations?.find((adaptation) => adaptation.id === repairPreview.choice.adaptationId)?.name}` : `${state.meals.find((meal) => meal.id === repairTarget.mealId)?.name} becomes ${repairPreview.choice.kind === 'takeout' ? 'takeout' : state.meals.find((meal) => meal.id === repairPreview.plan.slots.find((slot) => slot.id === repairTarget.id)?.mealId)?.name}`}. Unaffected days stay unchanged.</p>{repairPreview.changedSlotIds.length > 0 && <ul>{repairPreview.changedSlotIds.map((slotId) => { const before = repairPlan?.slots.find((slot) => slot.id === slotId); const after = repairPreview.plan.slots.find((slot) => slot.id === slotId); return <li key={slotId}>{before?.date}: {state.meals.find((meal) => meal.id === before?.mealId)?.name ?? 'Takeout'} → {state.meals.find((meal) => meal.id === after?.mealId)?.name ?? 'Takeout'}{before?.leftoverFromSlotId !== after?.leftoverFromSlotId && ' (planned leftover dependency changed)'}{JSON.stringify(before?.leftoverLotIds ?? []) !== JSON.stringify(after?.leftoverLotIds ?? []) && ` (confirmed leftover lots: ${(before?.leftoverLotIds ?? []).join(', ') || 'none'} → ${(after?.leftoverLotIds ?? []).join(', ') || 'none'})`}</li> })}</ul>}{repairPreview.consumedLotIds.length > 0 && <p>Confirmed leftover lots consumed: {repairPreview.consumedLotIds.join(', ')}.</p>}{repairPreview.releasedLotIds.length > 0 && <p>Confirmed leftover lots released: {repairPreview.releasedLotIds.join(', ')}.</p>}{repairGroceryChanges && <><p>Grocery changes: {repairGroceryChanges.added.length ? `add ${repairGroceryChanges.added.join(', ')}` : 'no additions'}; {repairGroceryChanges.removed.length ? `remove ${repairGroceryChanges.removed.join(', ')}` : 'no removals'}.</p>{repairGroceryChanges.manual.length > 0 && <p>Manual quantity adjustment: {repairGroceryChanges.manual.join(', ')}.</p>}</>}{repairPreview.perishableRisks.length > 0 && <label><input aria-label="Acknowledge perishable grocery risk" type="checkbox" checked={perishableAcknowledged} onChange={(event) => setPerishableAcknowledged(event.target.checked)} /> I understand this replaces meals with confirmed perishables.</label>}<button onClick={confirmRepair}>Confirm repair</button></div>}
         </div>}
       </section>}
       <section aria-labelledby="meals-heading">
