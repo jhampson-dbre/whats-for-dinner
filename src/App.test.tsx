@@ -320,15 +320,37 @@ describe('weekly planning', () => {
     expect(screen.getByRole('button', { name: 'Preview weekly plan' })).toBeDisabled()
   })
 
+  it('keeps guidance and no-eligible previews transient and non-confirmable', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'only', name: 'Only', active: true, safetyReview: 'approved' })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    const view = render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    expect(screen.getByText('Add another active compatible meal for a useful first plan.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Confirm weekly plan' })).not.toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans).toHaveLength(0)
+    view.unmount()
+
+    state.meals[0].active = false
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    expect(screen.getByText('Activate or confirm a compatible meal, then try again.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Confirm weekly plan' })).not.toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans).toHaveLength(0)
+  })
+
   it('keeps the fallback selected when an optional meal cannot fit the first cooking night', () => {
     const state = createEmptyAppState()
     state.household.scheduleExceptions.push({ id: 'late', date: '2026-08-17', constrained: true })
     state.meals.push(
       { id: 'fallback', name: 'Fallback', active: true, safetyReview: 'approved' },
+      { id: 'backup', name: 'Backup', active: true, safetyReview: 'approved' },
       { id: 'new', name: 'New', active: true, provisional: true, safetyReview: 'approved' },
     )
     state.outcomes.push({ id: 'fallback-outcome', mealId: 'fallback', acceptance: 'accepted' })
-    state.recipes.push({ id: 'new-recipe', title: 'New', mealId: 'new', prepMinutes: 20, cookMinutes: 30 })
+    state.recipes.push({ id: 'fallback-recipe', title: 'Fallback', mealId: 'fallback', prepMinutes: 10, cookMinutes: 10 }, { id: 'backup-recipe', title: 'Backup', mealId: 'backup', prepMinutes: 10, cookMinutes: 10 }, { id: 'new-recipe', title: 'New', mealId: 'new', prepMinutes: 20, cookMinutes: 30 })
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
     render(<App />)
@@ -336,13 +358,32 @@ describe('weekly planning', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Use this meal' }))
 
-    expect(screen.getByText('That unfamiliar meal cannot fit the first cooking night, so the proven fallback remains selected.')).toBeInTheDocument()
+    expect(screen.getByText('That unfamiliar meal cannot fit the first cooking night, so the familiar fallback remains selected.')).toBeInTheDocument()
+  })
+
+  it('shows and persists the actual scored fallback when IDs sort differently', () => {
+    const state = createEmptyAppState()
+    state.household.scheduleExceptions.push({ id: 'late', date: '2026-08-17', constrained: true })
+    state.meals.push({ id: 'a-slow', name: 'A slow', active: true, safetyReview: 'approved' }, { id: 'z-quick', name: 'Z quick', active: true, safetyReview: 'approved' }, { id: 'new', name: 'New', active: true, provisional: true, safetyReview: 'approved' })
+    state.recipes.push({ id: 'a-recipe', title: 'A slow', mealId: 'a-slow', prepMinutes: 20, cookMinutes: 30 }, { id: 'z-recipe', title: 'Z quick', mealId: 'z-quick', prepMinutes: 10, cookMinutes: 10 }, { id: 'new-recipe', title: 'New', mealId: 'new', prepMinutes: 20, cookMinutes: 30 })
+    state.outcomes.push({ id: 'accepted', mealId: 'a-slow', acceptance: 'accepted' })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    expect(screen.getByText(/No action keeps familiar fallback Z quick/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Not for us' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
+
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].variants).toEqual([expect.objectContaining({ mealId: 'z-quick', label: 'Familiar fallback for optional unfamiliar meal' })])
   })
 
   it('makes a rejected provisional meal inactive when the weekly plan is confirmed', () => {
     const state = createEmptyAppState()
     state.meals.push(
       { id: 'fallback', name: 'Fallback', active: true, safetyReview: 'approved' },
+      { id: 'backup', name: 'Backup', active: true, safetyReview: 'approved' },
       { id: 'new', name: 'New', active: true, provisional: true, safetyReview: 'approved' },
     )
     state.outcomes.push({ id: 'fallback-outcome', mealId: 'fallback', acceptance: 'accepted' })
@@ -358,7 +399,7 @@ describe('weekly planning', () => {
 
   it('records user-selected planned takeout as a takeout revision, not a planner meal', () => {
     const state = createEmptyAppState()
-    state.meals.push({ id: 'meal-a', name: 'Soup', active: true, safetyReview: 'approved' })
+    state.meals.push({ id: 'meal-a', name: 'Soup', active: true, safetyReview: 'approved' }, { id: 'meal-b', name: 'Pasta', active: true, safetyReview: 'approved' })
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
     render(<App />)
@@ -373,7 +414,7 @@ describe('weekly planning', () => {
 
   it('does not carry an old plan incomplete-meal acknowledgement into a new plan', () => {
     const state = createEmptyAppState()
-    state.meals.push({ id: 'soup', name: 'Soup', active: true, safetyReview: 'approved' })
+    state.meals.push({ id: 'soup', name: 'Soup', active: true, safetyReview: 'approved' }, { id: 'pasta', name: 'Pasta', active: true, safetyReview: 'approved' })
     state.plans.push({ id: 'old', confirmed: true, slots: [{ id: 'old-slot', date: '2026-08-10', mealId: 'soup' }], shopping: { confirmedAt: '2026-08-10T00:00:00.000Z', partial: true, skippedIncompleteMealIds: ['soup'], items: [] } } as never)
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
