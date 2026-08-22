@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
 import recipeFixture from './import/recipeKeeper.fixture.html?raw'
 import App from './App'
+import { mealLearning } from './domain/learning'
 import { classifyRecovery } from './domain/outcomes'
 import { APP_STATE_STORAGE_KEY, createEmptyAppState, importAppState } from './state/storage'
 
@@ -1410,6 +1411,38 @@ describe('Recipe Keeper import', () => {
 
 describe('cooking outcomes', () => {
   afterEach(() => { localStorage.clear(); vi.restoreAllMocks(); vi.useRealTimers() })
+
+  it('carries a linked recovery through confirmed repair, completion, and household learning', () => {
+    const state = createEmptyAppState()
+    state.household.diners.push({ id: 'ava', name: 'Ava', active: true })
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, recoveryMealIds: ['soup'] }, { id: 'soup', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'tacos', expectedDinerIds: ['ava'] }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    const view = render(<App />)
+    fireEvent.change(screen.getByLabelText('Plan to repair'), { target: { value: 'plan' } })
+    fireEvent.change(screen.getByLabelText('Date to repair'), { target: { value: 'slot' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use recovery Soup' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].repairRevisions).toEqual([expect.objectContaining({ slotId: 'slot', kind: 'recovery' })])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start cooking Soup' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Dinner’s ready Soup' }))
+    const saved = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    saved.plans[0].slots[0].feedbackEligibleAt = '2020-01-01T00:00:00.000Z'
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(saved))
+    view.unmount()
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
+    fireEvent.change(screen.getByLabelText('Feedback for Ava'), { target: { value: 'accepted' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
+
+    const outcomes = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes
+    expect(outcomes).toEqual([expect.objectContaining({ mealId: 'soup', acceptance: 'accepted', recoveryClassification: 'successful' })])
+    expect(mealLearning(outcomes, 'soup')).toMatchObject({ confidence: 'Learning', relevant: 1 })
+  })
 
   it('persists cooking timestamps and only opens delayed feedback after a reload', () => {
     vi.useFakeTimers()

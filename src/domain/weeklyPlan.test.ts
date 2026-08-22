@@ -214,6 +214,13 @@ describe('weekly plan', () => {
     expect(preview.slots[0].reasons).toContain('Household outcomes contribute 32/32.')
   })
 
+  it('changes the next first choice when corrected household evidence reverses it', () => {
+    const state = { ...base, meals: [meal('alpha'), meal('beta')], outcomes: [{ id: 'old', mealId: 'alpha', acceptance: 'accepted' as const }] }
+
+    expect(plan(buildWeeklyPlan(state, '2026-08-17')).slots[0].mealId).toBe('alpha')
+    expect(plan(buildWeeklyPlan({ ...state, outcomes: [...state.outcomes, { id: 'fixed', correctionOfOutcomeId: 'old', mealId: 'alpha', acceptance: 'rejected' as const }] }, '2026-08-17')).slots[0].mealId).toBe('beta')
+  })
+
   it('keeps inactive and unknown-safety meals excluded within a valid restricted plan', () => {
     const preview = plan(buildWeeklyPlan({ ...base, household: { ...base.household, hardRestrictions: [{ id: 'restriction' }] }, meals: [
       meal('approved-a'), meal('approved-b'), meal('inactive', { active: false }), meal('unknown', { safetyReview: 'unknown' }),

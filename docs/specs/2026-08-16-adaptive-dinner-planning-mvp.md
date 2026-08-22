@@ -393,11 +393,11 @@ framework, database, auth, repository layer, or live AI dependency.
 
 Recipe images are not imported or persisted in the MVP.
 
-`AppStateV2` is the currently implemented runtime and persisted document. V2 retains
-the V1 document shape and reference refinements; the discriminator and familiarity
-semantics are its only schema-version changes:
+`AppStateV4` is the currently implemented runtime and persisted document. V2 retains
+the V1 document shape and reference refinements; its discriminator and familiarity
+semantics were its only schema-version changes:
 
-- `schemaVersion: 2` is the top-level discriminator.
+- In V2, `schemaVersion: 2` was the top-level discriminator.
 - IDs are stable opaque strings generated with the native `crypto.randomUUID()` API.
 - Calendar dates use `YYYY-MM-DD`, timestamps use UTC ISO 8601 strings, and durations
   use non-negative integer minutes.
@@ -501,7 +501,7 @@ Keep candidate eligibility, scoring, plan construction, repair preview, grocery
 derivation, and learning summaries as pure domain functions. The storage module alone
 loads, validates, saves, exports, and imports application state.
 
-## Original EPIC-1 delivery plan
+## Completed EPIC-1 delivery record
 
 1. **TREK-1: App foundation and local persistence**
    Create the application, initial `AppStateV1`, validation, local persistence,
@@ -541,7 +541,7 @@ Implementation completed after senior developer review accepted this dependency 
    preserve all safety-review data during migration.
 
 2. **First-plan selection and guidance**
-   Depend on slice 1's V2 runtime contract. Add least-used-first cooking selection,
+   Depended on slice 1's V2 runtime contract and added least-used-first cooking selection,
    familiar fallback semantics, discriminated preview results, actionable guidance,
    and recipe timing through either schema-supported meal association direction.
 
@@ -605,19 +605,20 @@ a fixed slot outside the targeted dependency closure; overlap resolution needs a
 implicit current-plan policy; or leftover behavior requires multiple planned targets or
 multiple consumers of one actual lot.
 
-## Hands-off-night pilot correction delivery plan
+## Hands-off-night pilot correction delivery record
 
-Planning is approved and architecture review is required before implementation. This
-section does not authorize implementation.
+Implementation is complete and pilot validation is active. This section records the
+approved scope that guided the completed correction.
 
 1. **One vertical V4 hands-off-capacity slice**
-   Freeze V1 through V3 and add the two optional V4 markers and bounded V3-to-V4
-   migration above. Let the household select normal, constrained/quick-cook, or
-   hands-off capacity for a date and explicitly mark a selected recipe as slow-cooker
-   capable. Align initial planning, repair, confirmed-plan revalidation, preview
-   invalidation, explanations, import/export, and storage behavior. On hands-off dates,
-   use one available reserved leftover target first and otherwise allow only a marked
-   selected recipe. Preserve one-source/one-target semantics and explicit takeout.
+   Froze V1 through V3, added the two optional V4 markers and bounded V3-to-V4
+   migration above, and let the household select normal, constrained/quick-cook, or
+   hands-off capacity for a date while explicitly marking a selected recipe as
+   slow-cooker capable. The completed slice aligned initial planning, repair,
+   confirmed-plan revalidation, preview invalidation, explanations, import/export, and
+   storage behavior. On hands-off dates, it uses one available reserved leftover target
+   first and otherwise allows only a marked selected recipe, preserving
+   one-source/one-target semantics and explicit takeout.
 
 Do not add time-of-day scheduling, automatic slow-cooker detection, appliance safety
 claims, yield prediction, additional leftover capacity, automatic takeout, a rules
@@ -626,7 +627,7 @@ architecture review identifies a foundation dependency.
 
 ## Verification
 
-Use focused TDD for every behavior slice. After each task, run:
+Focused TDD was used for every behavior slice. For focused follow-up verification, run:
 
 ```powershell
 npm test -- --run
@@ -654,11 +655,11 @@ recipe association directions. Import interaction coverage verifies familiar-by-
 new meals, persisted unfamiliar opt-in, and version imports preserving target familiarity. App interaction
 coverage verifies that `guidance` and `no-eligible` omit or disable plan confirmation
 and leave the V4 `plans` collection unchanged. Use Testing Library
-for the task's primary interaction flow. After the final task, add one browser smoke
-path for onboarding -> plan -> shop -> cook -> feedback, including one confirmed replan
-only if it fits that bounded path. A second broad end-to-end matrix is not required.
+for the task's primary interaction flow. The browser smoke covers onboarding -> plan
+-> shop -> cook -> feedback and one confirmed completed-dinner correction. A second
+broad end-to-end matrix is not required.
 
-For the hands-off correction, add focused schema/migration coverage and pure planner,
+For the hands-off correction, focused schema/migration coverage and pure planner,
 repair, and revalidation cases proving: normal behavior is unchanged; constrained keeps
 the known 30-minute hands-on threshold; hands-off rejects ordinary quick meals; one
 yield covers only one later hands-off dinner; two hands-off nights with one yield use
