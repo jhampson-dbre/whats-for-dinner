@@ -514,6 +514,32 @@ describe('Recipe Keeper import', () => {
     }))
   })
 
+  it('saves the visible filtered candidate after saving another import', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    const secondRecipe = recipeFixture
+      .replace('rk-1', 'rk-2')
+      .replace('Weeknight Soup', 'Hidden Salad')
+    const thirdRecipe = recipeFixture
+      .replace('rk-1', 'rk-3')
+      .replace('Weeknight Soup', 'Quick Pasta')
+    const bytes = zipSync({ 'recipes.html': strToU8(recipeFixture.replace('</body>', `${secondRecipe}${thirdRecipe}</body>`)) })
+    fireEvent.change(screen.getByLabelText('Recipe Keeper ZIP'), { target: { files: [{ arrayBuffer: () => Promise.resolve(bytes.buffer) }] } })
+
+    await screen.findByText(/Preview: Weeknight Soup/)
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }))
+    await screen.findByText('Recipe saved. Confirm compatibility before planning.')
+    fireEvent.change(screen.getByLabelText('Search recipes'), { target: { value: 'Quick Pasta' } })
+
+    const confirmImport = screen.getByRole('button', { name: 'Confirm import' })
+    expect(confirmImport).toBeEnabled()
+    fireEvent.click(confirmImport)
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').recipes).toEqual([
+      expect.objectContaining({ title: 'Weeknight Soup', externalId: 'rk-1' }),
+      expect.objectContaining({ title: 'Quick Pasta', externalId: 'rk-3' }),
+    ]))
+  })
+
   it('does not turn an overlong imported title into an invalid new meal', async () => {
     const { container } = render(<App />)
     const bytes = zipSync({ 'recipes.html': strToU8(recipeFixture.replace('Weeknight Soup', 'x'.repeat(161))) })
