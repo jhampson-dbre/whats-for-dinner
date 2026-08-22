@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildGroceryList } from './grocery'
 
 describe('buildGroceryList', () => {
-  it('uses only the current confirmed plan, merges direct unit aliases, retains source lines, and exposes incomplete meals', () => {
+  it('uses the selected confirmed plan, merges direct unit aliases, retains source lines, and exposes incomplete meals', () => {
     const list = buildGroceryList({
       meals: [{ id: 'soup', name: 'Soup' }, { id: 'toast', name: 'Toast' }, { id: 'old', name: 'Old meal' }, { id: 'missing', name: 'Missing meal' }],
       recipes: [
@@ -14,7 +14,7 @@ describe('buildGroceryList', () => {
         { id: 'old-plan', confirmed: true, slots: [{ id: 'old-slot', date: '2026-08-01', mealId: 'old', recipeId: 'old-recipe' }] },
         { id: 'plan', confirmed: true, slots: [{ id: 'soup-slot', date: '2026-08-17', mealId: 'soup', recipeId: 'soup-recipe' }, { id: 'toast-slot', date: '2026-08-18', mealId: 'toast', recipeId: 'toast-recipe' }, { id: 'missing-slot', date: '2026-08-19', mealId: 'missing' }] },
       ],
-    })
+    }, 'plan')
 
     expect(list.complete).toBe(false)
     expect(list.items).toEqual(expect.arrayContaining([
@@ -26,14 +26,20 @@ describe('buildGroceryList', () => {
   })
 
   it('keeps ambiguous ingredient lines separate', () => {
-    const list = buildGroceryList({ meals: [{ id: 'meal', name: 'Meal' }], recipes: [{ id: 'recipe', mealId: 'meal', ingredients: ['to taste salt', 'salt'] }], plans: [{ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'meal', recipeId: 'recipe' }] }] })
+    const list = buildGroceryList({ meals: [{ id: 'meal', name: 'Meal' }], recipes: [{ id: 'recipe', mealId: 'meal', ingredients: ['to taste salt', 'salt'] }], plans: [{ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'meal', recipeId: 'recipe' }] }] }, 'plan')
 
     expect(list.items.map((item) => item.label)).toEqual(['to taste salt', 'salt'])
   })
 
   it('does not buy recipe ingredients again for a planned-leftover slot', () => {
-    const list = buildGroceryList({ meals: [{ id: 'chili', name: 'Chili' }], recipes: [{ id: 'recipe', mealId: 'chili', ingredients: ['1 cup beans'] }], plans: [{ id: 'plan', confirmed: true, slots: [{ id: 'cook', date: '2026-08-17', mealId: 'chili', recipeId: 'recipe' }, { id: 'leftovers', date: '2026-08-18', mealId: 'chili', recipeId: 'recipe', leftoverFromSlotId: 'cook' }] }] })
+    const list = buildGroceryList({ meals: [{ id: 'chili', name: 'Chili' }], recipes: [{ id: 'recipe', mealId: 'chili', ingredients: ['1 cup beans'] }], plans: [{ id: 'plan', confirmed: true, slots: [{ id: 'cook', date: '2026-08-17', mealId: 'chili', recipeId: 'recipe' }, { id: 'leftovers', date: '2026-08-18', mealId: 'chili', recipeId: 'recipe', leftoverFromSlotId: 'cook' }] }] }, 'plan')
 
     expect(list.items).toEqual([expect.objectContaining({ label: '1 cup beans', mealIds: ['chili'] })])
+  })
+  it('returns an empty list for an unknown or unconfirmed selected plan', () => {
+    const state = { meals: [{ id: 'meal', name: 'Meal' }], recipes: [{ id: 'recipe', mealId: 'meal', ingredients: ['1 cup beans'] }], plans: [{ id: 'draft', confirmed: false, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'meal', recipeId: 'recipe' }] }] }
+
+    expect(buildGroceryList(state, 'missing').items).toEqual([])
+    expect(buildGroceryList(state, 'draft').items).toEqual([])
   })
 })

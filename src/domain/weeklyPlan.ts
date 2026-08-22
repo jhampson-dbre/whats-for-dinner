@@ -188,6 +188,6 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
   return { kind: 'repair', plan: { ...plan, slots }, leftoverLots: repairState.leftoverLots.map((lot) => consumedLotIds.includes(lot.id) ? { ...lot, active: false } : releasedLotIds.includes(lot.id) ? { ...lot, active: true } : lot), changedSlotIds, revisionDrafts: changedSlotIds.map((slotId) => ({ slotId, kind: request.action.kind })), releasedLotIds, consumedLotIds, perishableRisks }
 }
 
-export function buildWeeklyPlan(state: PlannerState, startDate: string, optionalAction: OptionalAction = 'fallback'): WeeklyPlan {
-  return replanRemainingWeek(state, { kind: 'initial', startDate, optionalAction })
+export function buildWeeklyPlan(state: PlannerState, startDate: string, optionalAction: OptionalAction = 'fallback', takeoutDates: string[] = []): WeeklyPlan {
+  return replanRemainingWeek(state, { kind: 'initial', startDate, optionalAction, takeoutDates })
 }

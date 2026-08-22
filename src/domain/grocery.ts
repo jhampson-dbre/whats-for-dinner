@@ -31,8 +31,8 @@ function plural(unit: string, quantity: number): string {
   return quantity === 1 ? unit : unit === 'tbsp' ? 'tbsp' : `${unit}s`
 }
 
-export function buildGroceryList(state: GroceryState): GroceryList {
-  const plan = [...state.plans].reverse().find((item) => item.confirmed)
+export function buildGroceryList(state: GroceryState, planId: string): GroceryList {
+  const plan = state.plans.find((item) => item.id === planId && item.confirmed)
   if (!plan) return { items: [], incompleteMeals: [], complete: true }
   const items: GroceryItem[] = []
   const merged = new Map<string, { quantity: number; item: GroceryItem }>()
