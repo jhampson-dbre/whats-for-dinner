@@ -24,7 +24,38 @@ describe('weekly plan', () => {
     const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-18', action: { kind: 'takeout', takeoutContext: 'planned' } })
     expect(preview).toMatchObject({ kind: 'repair', changedSlotIds: ['target'], revisionDrafts: [{ slotId: 'target', kind: 'takeout' }] })
     if (preview.kind === 'repair') expect(preview.plan.slots.find((slot) => slot.id === 'outside')).toEqual(state.plans[0].slots[2])
-    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'replan' } })).toMatchObject({ kind: 'invalid-target' })
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'takeout', takeoutContext: 'planned' } })).toMatchObject({ kind: 'invalid-target' })
+  })
+
+  it('turns an unfinished leftover source into takeout and replans its dependent', () => {
+    const state = { ...base, meals: [meal('source'), meal('replacement')], plans: [{ id: 'plan', slots: [{ id: 'source', date: '2026-08-17', mealId: 'source', cookingStartedAt: '2026-08-17T17:00:00.000Z' }, { id: 'dependent', date: '2026-08-18', mealId: 'source', leftoverFromSlotId: 'source' }] }], leftoverLots: [] }
+    const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'takeout', takeoutContext: 'planned' } })
+
+    expect(preview).toMatchObject({ kind: 'repair', changedSlotIds: ['source', 'dependent'], revisionDrafts: [{ slotId: 'source', kind: 'takeout' }, { slotId: 'dependent', kind: 'replan' }] })
+    if (preview.kind === 'repair') {
+      expect(preview.plan.slots.find((slot) => slot.id === 'source')).not.toHaveProperty('cookingStartedAt')
+      expect(preview.plan.slots.find((slot) => slot.id === 'dependent')).toMatchObject({ mealId: 'source' })
+      expect(preview.plan.slots.find((slot) => slot.id === 'dependent')?.leftoverFromSlotId).toBeUndefined()
+    }
+  })
+
+  it('turns an unfinished leftover target into takeout without changing its source', () => {
+    const state = { ...base, meals: [meal('source'), meal('replacement')], plans: [{ id: 'plan', slots: [{ id: 'source', date: '2026-08-17', mealId: 'source' }, { id: 'target', date: '2026-08-18', mealId: 'source', leftoverFromSlotId: 'source' }] }], leftoverLots: [] }
+    const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-18', action: { kind: 'takeout', takeoutContext: 'planned' } })
+
+    expect(preview).toMatchObject({ kind: 'repair', changedSlotIds: ['target'], revisionDrafts: [{ slotId: 'target', kind: 'takeout' }] })
+    if (preview.kind === 'repair') {
+      expect(preview.plan.slots.find((slot) => slot.id === 'source')).toEqual(state.plans[0].slots[0])
+      expect(preview.plan.slots.find((slot) => slot.id === 'target')).toEqual(expect.objectContaining({ id: 'target', mealId: undefined }))
+      expect(preview.plan.slots.find((slot) => slot.id === 'target')?.leftoverFromSlotId).toBeUndefined()
+    }
+  })
+
+  it('keeps both sides of an ordinary swap attributed as swaps', () => {
+    const state = { ...base, meals: [meal('a'), meal('b')], plans: [{ id: 'plan', slots: [{ id: 'target', date: '2026-08-17', mealId: 'a' }, { id: 'other', date: '2026-08-18', mealId: 'b' }] }], leftoverLots: [] }
+    const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'swap', otherDate: '2026-08-18' } })
+
+    expect(preview).toMatchObject({ kind: 'repair', changedSlotIds: ['target', 'other'], revisionDrafts: [{ slotId: 'target', kind: 'swap' }, { slotId: 'other', kind: 'swap' }] })
   })
 
   it('refills a source closure with an available recipe and leaves outside slots unchanged', () => {

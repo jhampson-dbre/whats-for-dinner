@@ -37,7 +37,7 @@ function selectedRecipeEffort(state: PlannerState, meal: Meal, recipe: Recipe | 
 }
 
 export type InitialRequest = { kind: 'initial'; startDate: string; optionalAction?: OptionalAction; takeoutDates?: string[] }
-export type ReplanState = PlannerState & { plans: Array<{ id: string; slots: Array<{ id: string; date: string; mealId?: string; recipeId?: string; dinnerReadyAt?: string; leftoverFromSlotId?: string; leftoverLotIds?: string[] }>; shopping?: { items: Array<{ id?: string; perishable: boolean; availability: string; mealIds: string[]; sourceLines: string[]; sourceSlotIds?: string[] }> } }>; leftoverLots: Array<{ id: string; active?: boolean; sourceMealId?: string }> }
+export type ReplanState = PlannerState & { plans: Array<{ id: string; slots: Array<{ id: string; date: string; mealId?: string; recipeId?: string; cookingStartedAt?: string; dinnerReadyAt?: string; leftoverFromSlotId?: string; leftoverLotIds?: string[] }>; shopping?: { items: Array<{ id?: string; perishable: boolean; availability: string; mealIds: string[]; sourceLines: string[]; sourceSlotIds?: string[] }> } }>; leftoverLots: Array<{ id: string; active?: boolean; sourceMealId?: string }> }
 export type RepairAction = { kind: 'replan' } | { kind: 'simpler'; recipeId: string; adaptationId: string } | { kind: 'swap'; otherDate: string } | { kind: 'leftovers'; leftoverLotId: string } | { kind: 'recovery'; mealId: string } | { kind: 'takeout'; takeoutContext: 'planned' | 'unforeseeable-disruption' | 'predictable-planning-or-acceptance-failure' }
 export type RepairRequest = { kind: 'repair'; planId: string; targetDate: string; action: RepairAction }
 export type RepairCorePreview = { kind: 'repair'; plan: ReplanState['plans'][number]; leftoverLots: ReplanState['leftoverLots']; changedSlotIds: string[]; revisionDrafts: Array<{ slotId: string; kind: RepairAction['kind'] }>; releasedLotIds: string[]; consumedLotIds: string[]; perishableRisks: Array<{ itemId?: string; sourceSlotId?: string; sourceLine: string }> }
@@ -152,7 +152,11 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
     if (!validRecipe(meal, recipe, target.date)) return { kind: 'invalid-target', nextStep: 'Choose an eligible recovery meal.' }
     replace({ mealId: meal!.id, recipeId: recipe?.id, leftoverFromSlotId: undefined, leftoverLotIds: undefined })
   }
-  else if (request.action.kind === 'takeout') replace({ mealId: undefined, recipeId: undefined, leftoverFromSlotId: undefined, leftoverLotIds: undefined })
+  else if (request.action.kind === 'takeout') {
+    replace({ mealId: undefined, recipeId: undefined, leftoverFromSlotId: undefined, leftoverLotIds: undefined })
+    const targetSlot = slots.find((slot) => slot.id === target.id)!
+    delete targetSlot.cookingStartedAt
+  }
   else if (request.action.kind === 'leftovers') {
     const lot = repairState.leftoverLots.find((item) => item.id === (request.action as Extract<RepairAction, { kind: 'leftovers' }>).leftoverLotId && item.active !== false)
     if (!lot || repairState.plans.some((candidate) => candidate.slots.some((slot) => slot.id !== target.id && slot.leftoverLotIds?.includes(lot.id)))) return { kind: 'invalid-target', nextStep: 'Choose an available leftover lot.' }
@@ -185,7 +189,8 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
   }
   const perishableRisks = plan.shopping?.items.flatMap((item) => item.perishable && item.availability === 'available' && target.mealId && item.mealIds.includes(target.mealId) ? item.sourceLines.map((sourceLine, index) => ({ itemId: item.id, sourceSlotId: item.sourceSlotIds?.[index], sourceLine })) : []) ?? []
   const changedSlotIds = slots.filter((slot, index) => JSON.stringify(slot) !== JSON.stringify(plan.slots[index])).map((slot) => slot.id)
-  return { kind: 'repair', plan: { ...plan, slots }, leftoverLots: repairState.leftoverLots.map((lot) => consumedLotIds.includes(lot.id) ? { ...lot, active: false } : releasedLotIds.includes(lot.id) ? { ...lot, active: true } : lot), changedSlotIds, revisionDrafts: changedSlotIds.map((slotId) => ({ slotId, kind: request.action.kind })), releasedLotIds, consumedLotIds, perishableRisks }
+  const replannedSlotIds = new Set(closure.map((slot) => slot.id))
+  return { kind: 'repair', plan: { ...plan, slots }, leftoverLots: repairState.leftoverLots.map((lot) => consumedLotIds.includes(lot.id) ? { ...lot, active: false } : releasedLotIds.includes(lot.id) ? { ...lot, active: true } : lot), changedSlotIds, revisionDrafts: changedSlotIds.map((slotId) => ({ slotId, kind: slotId !== target.id && replannedSlotIds.has(slotId) ? 'replan' : request.action.kind })), releasedLotIds, consumedLotIds, perishableRisks }
 }
 
 export function buildWeeklyPlan(state: PlannerState, startDate: string, optionalAction: OptionalAction = 'fallback', takeoutDates: string[] = []): WeeklyPlan {

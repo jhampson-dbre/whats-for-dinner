@@ -658,7 +658,7 @@ describe('weekly planning', () => {
     expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
   })
 
-  it('confirms a non-adjacent leftover link and protects both ends from takeout', () => {
+  it('lets either end of a planned leftover link become takeout', () => {
     const state = createEmptyAppState()
     state.household.scheduleExceptions.push({ id: 'mon', date: '2026-08-17', constrained: true }, { id: 'wed', date: '2026-08-19', constrained: true })
     state.meals.push({ id: 'crockpot', name: 'Crockpot', active: true, safetyReview: 'approved', plannedLeftoverDinner: true }, { id: 'regular', name: 'Regular', active: true, safetyReview: 'approved' })
@@ -668,11 +668,42 @@ describe('weekly planning', () => {
     render(<App />)
     fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
     fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
-    expect(screen.getByRole('button', { name: 'Plan takeout for 2026-08-17' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Plan takeout for 2026-08-19' })).toBeDisabled()
+    const source = screen.getByRole('button', { name: 'Plan takeout for 2026-08-17' })
+    const target = screen.getByRole('button', { name: 'Plan takeout for 2026-08-19' })
+    expect(source).toBeEnabled()
+    expect(target).toBeEnabled()
+    fireEvent.click(source)
+    expect(screen.getByRole('button', { name: 'Use planned meal' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Use planned meal' }))
+    fireEvent.click(target)
     fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
     const slots = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots
-    expect(slots.find((slot: { date: string }) => slot.date === '2026-08-19').leftoverFromSlotId).toBe(slots.find((slot: { date: string }) => slot.date === '2026-08-17').id)
+    const takeout = slots.find((slot: { date: string }) => slot.date === '2026-08-19')
+    expect(takeout.mealId).toBeUndefined()
+    expect(slots.some((slot: { leftoverFromSlotId?: string }) => slot.leftoverFromSlotId === takeout.id)).toBe(false)
+  })
+
+  it('records dependent leftover recovery separately from a source takeout repair', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'source', name: 'Source', active: true, safetyReview: 'approved' }, { id: 'replacement', name: 'Replacement', active: true, safetyReview: 'approved' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'source', cookingStartedAt: '2026-08-17T17:00:00.000Z' }, { id: 'dependent', date: '2026-08-18', mealId: 'source', leftoverFromSlotId: 'source' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Plan to repair'), { target: { value: 'plan' } })
+    fireEvent.change(screen.getByLabelText('Date to repair'), { target: { value: 'source' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose takeout' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+
+    const plan = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0]
+    expect(plan.slots.find((slot: { id: string }) => slot.id === 'source')).not.toHaveProperty('cookingStartedAt')
+    expect(plan.slots.find((slot: { id: string }) => slot.id === 'dependent').leftoverFromSlotId).toBeUndefined()
+    expect(plan.repairRevisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ slotId: 'source', kind: 'takeout' }),
+      expect.objectContaining({ slotId: 'dependent', kind: 'recovery', reason: 'replan' }),
+    ]))
   })
 
   it('does not carry an old plan incomplete-meal acknowledgement into a new plan', () => {

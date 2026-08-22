@@ -1,12 +1,11 @@
 # What's for Dinner? Adaptive Planning MVP
 
-Status: Adaptive replanning architecture and delivery plan accepted; implementation paused
+Status: Implemented; pilot validation active
 Date: 2026-08-21
-Tracker: EPIC-1
+Tracker: EPIC-1, EPIC-4
 
-Adaptive constraint and leftover correction completed 2026-08-22. The broader adaptive
-replanning correction below is approved for planning and remains paused before
-implementation.
+The pilot onboarding and adaptive replanning corrections completed 2026-08-22. Pilot
+validation is active.
 
 ## Product outcome
 
@@ -487,8 +486,7 @@ truth.
 
 ## Pilot onboarding correction delivery plan
 
-Implementation remains paused until senior developer review accepts this dependency
-plan.
+Implementation completed after senior developer review accepted this dependency plan.
 
 1. **Persisted familiarity semantics**
    Add `AppStateV2`, the bounded V1-to-V2 migration and storage/import/export failure
@@ -510,7 +508,7 @@ specified above.
 ## Adaptive replanning correction delivery plan
 
 Architecture and senior developer review accepted this dependency plan. Implementation
-remains paused pending separate user authorization.
+is complete and pilot validation is active.
 
 1. **Foundation: V3 and shared replanning core**
    Own `schema.ts`, `storage.ts`, `weeklyPlan.ts`, `repair.ts`, `grocery.ts`,
