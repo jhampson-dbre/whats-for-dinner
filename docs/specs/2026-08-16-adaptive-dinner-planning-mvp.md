@@ -1,8 +1,11 @@
 # What's for Dinner? Adaptive Planning MVP
 
-Status: Pilot onboarding correction approved; implementation paused
+Status: Pilot onboarding complete; adaptive constraint and leftover correction approved
 Date: 2026-08-21
 Tracker: EPIC-1
+
+Adaptive constraint and leftover correction approved 2026-08-22; implementation in
+progress under a follow-up tracker item.
 
 ## Product outcome
 
@@ -122,6 +125,22 @@ selections are distinct. With two through six choices, cooking counts differ by 
 most one and adjacent duplicates are avoided whenever another least-used meal fits the
 date. An explicitly planned leftover slot is the only planned duplicate exception and
 does not increment the cooking-selection count.
+
+Constrained-night fit measures hands-on effort rather than total elapsed cooking time.
+Use the average corrected `activeEffortMinutes` when household evidence exists;
+otherwise use recipe `prepMinutes`. Unknown hands-on effort remains unknown capacity
+on a constrained night. `cookMinutes` and observed start-to-ready elapsed time may
+inform explanations, but unattended duration alone never excludes a meal. This keeps
+slow-cooker and other make-ahead meals eligible when their known hands-on effort fits
+the initial 30-minute constrained-night threshold.
+
+`plannedLeftoverDinner` remains the explicit assertion that one cooking occurrence
+produces one additional household dinner. The planner assigns that coverage to the
+earliest unfilled later constrained night in the same seven-day plan, even when an
+unconstrained dinner occurs between source and leftovers. When no later constrained
+night remains, it uses the earliest unfilled later night. Each coverage unit is
+consumed once, retains its link to the earlier source slot, never increments cooking
+usage, and is never inferred from recipe yield alone.
 
 Planner preview output is discriminated:
 
