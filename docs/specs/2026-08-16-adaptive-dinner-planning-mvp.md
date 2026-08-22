@@ -416,7 +416,9 @@ familiar meals with zero outcomes; unfamiliar fallback without an accepted outco
 7, 6, 2, and 1 viable-meal cases; strong scores not defeating rotation; adjacency;
 intentional leftovers; discriminated guidance/no-eligible results; and both supported
 recipe association directions. Import interaction coverage verifies familiar-by-default
-new meals, persisted unfamiliar opt-in, and version imports preserving target familiarity. Use Testing Library
+new meals, persisted unfamiliar opt-in, and version imports preserving target familiarity. App interaction
+coverage verifies that `guidance` and `no-eligible` omit or disable plan confirmation
+and leave the V2 `plans` collection unchanged. Use Testing Library
 for the task's primary interaction flow. After the final task, add one browser smoke
 path for onboarding -> plan -> shop -> cook -> feedback. A broad end-to-end matrix is
 not required.
