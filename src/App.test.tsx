@@ -590,26 +590,26 @@ describe('weekly planning', () => {
     state.household.scheduleExceptions.push({ id: 'late', date: '2026-08-18', constrained: true })
     state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' })
     state.recipes.push({ id: 'recipe', title: 'Tacos', mealId: 'tacos', prepMinutes: 31 })
-    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'tacos', recipeId: 'recipe' }, { id: 'target', date: '2026-08-18', mealId: 'tacos', recipeId: 'recipe', leftoverFromSlotId: 'source' }] } as never)
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'tacos', recipeId: 'recipe', cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }, { id: 'target', date: '2026-08-18', mealId: 'tacos', recipeId: 'recipe', leftoverFromSlotId: 'source' }] } as never)
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
     const view = render(<App />)
-    expect(screen.getAllByRole('button', { name: 'Dinner’s ready Tacos' })[1]).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Dinner’s ready Tacos' })).toBeEnabled()
     view.unmount(); render(<App />)
-    expect(screen.getAllByRole('button', { name: 'Dinner’s ready Tacos' })[1]).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Dinner’s ready Tacos' })).toBeEnabled()
   })
 
   it('keeps a planned-leftover target ready-capable when its source ingredient is unavailable', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' })
     state.recipes.push({ id: 'recipe', title: 'Tacos', mealId: 'tacos', ingredients: ['1 cup tomatoes'] })
-    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'tacos', recipeId: 'recipe' }, { id: 'target', date: '2026-08-18', mealId: 'tacos', recipeId: 'recipe', leftoverFromSlotId: 'source' }], shopping: { confirmedAt: '2026-08-17T12:00:00.000Z', partial: false, skippedIncompleteMealIds: [], items: [{ label: '1 cup tomatoes', sourceLines: ['1 cup tomatoes'], mealIds: ['tacos'], perishable: false, availability: 'unavailable' }] } } as never)
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'tacos', recipeId: 'recipe', cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }, { id: 'target', date: '2026-08-18', mealId: 'tacos', recipeId: 'recipe', leftoverFromSlotId: 'source' }], shopping: { confirmedAt: '2026-08-17T12:00:00.000Z', partial: false, skippedIncompleteMealIds: [], items: [{ label: '1 cup tomatoes', sourceLines: ['1 cup tomatoes'], mealIds: ['tacos'], perishable: false, availability: 'unavailable' }] } } as never)
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
     const view = render(<App />)
-    expect(screen.getAllByRole('button', { name: 'Dinner’s ready Tacos' })[1]).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Dinner’s ready Tacos' })).toBeEnabled()
     view.unmount(); render(<App />)
-    expect(screen.getAllByRole('button', { name: 'Dinner’s ready Tacos' })[1]).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Dinner’s ready Tacos' })).toBeEnabled()
   })
 
   it('continues to block a planned-leftover target when its meal is unsafe', () => {
@@ -1293,13 +1293,13 @@ describe('cooking outcomes', () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-08-19T18:00:00.000Z'))
     const state = createEmptyAppState()
     state.meals.push({ id: 'soup', name: 'Soup', active: true })
-    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'soup' }, { id: 'normal', date: '2026-08-18', mealId: 'soup' }, { id: 'target', date: '2026-08-19', mealId: 'soup', leftoverFromSlotId: 'source' }] } as never)
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'soup', cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }, { id: 'normal', date: '2026-08-18', mealId: 'soup' }, { id: 'target', date: '2026-08-19', mealId: 'soup', leftoverFromSlotId: 'source' }] } as never)
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
     const view = render(<App />)
-    expect(screen.getAllByRole('button', { name: 'Start cooking Soup' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: 'Start cooking Soup' })).toHaveLength(1)
     const ready = screen.getAllByRole('button', { name: 'Dinner’s ready Soup' })
-    fireEvent.click(ready[2])
+    fireEvent.click(ready[1])
     expect(screen.getByRole('status')).toHaveTextContent('Dinner recorded')
     vi.setSystemTime(new Date('2026-08-19T18:31:00.000Z'))
     view.unmount()
@@ -1313,6 +1313,18 @@ describe('cooking outcomes', () => {
     expect(outcome).not.toHaveProperty('dinnerReadyAt')
     expect(outcome).not.toHaveProperty('leftoverCoverage')
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').leftoverLots).toEqual([])
+  })
+
+  it('requires the source dinner to be ready before completing planned leftovers', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'soup', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'soup' }, { id: 'target', date: '2026-08-19', mealId: 'soup', leftoverFromSlotId: 'source' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    expect(screen.getAllByRole('button', { name: 'Dinner’s ready Soup' })[1]).toBeDisabled()
+    expect(screen.getByText('Mark the source dinner ready before serving leftovers.')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[1].dinnerReadyAt).toBeUndefined()
   })
 
   it('records an actual leftover dinner without showing cooking controls or saving cooking metrics', () => {
