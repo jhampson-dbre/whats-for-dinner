@@ -133,6 +133,7 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
   const plan = repairState.plans.find((item) => item.id === request.planId)
   const target = plan?.slots.find((item) => item.date === request.targetDate)
   if (!plan || !target || target.dinnerReadyAt) return { kind: 'invalid-target', nextStep: 'Choose an unfinished slot in the selected plan.' }
+  if (request.action.kind === 'takeout' && plan.slots.some((slot) => slot.leftoverFromSlotId === target.id && slot.dinnerReadyAt)) return { kind: 'invalid-target', nextStep: 'A completed leftover dinner cannot be changed.' }
   if (plan.slots.some((slot) => plan.slots.filter((other) => other.leftoverFromSlotId === slot.id).length > 1) || repairState.plans.some((candidate) => candidate.slots.some((slot) => (slot.leftoverLotIds?.length ?? 0) > 1) || repairState.leftoverLots.some((lot) => repairState.plans.flatMap((candidate) => candidate.slots).filter((slot) => slot.leftoverLotIds?.includes(lot.id)).length > 1))) return { kind: 'invalid-target', nextStep: 'Repair malformed leftover links before replanning.' }
   const slots = plan.slots.map((slot) => ({ ...slot }))
   const changed = new Set<string>()

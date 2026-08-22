@@ -39,6 +39,12 @@ describe('weekly plan', () => {
     }
   })
 
+  it('rejects source takeout when its leftover dependent dinner is complete', () => {
+    const state = { ...base, meals: [meal('source'), meal('replacement')], plans: [{ id: 'plan', slots: [{ id: 'source', date: '2026-08-17', mealId: 'source' }, { id: 'dependent', date: '2026-08-18', mealId: 'source', leftoverFromSlotId: 'source', dinnerReadyAt: '2026-08-18T18:00:00.000Z' }] }], leftoverLots: [] }
+
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'takeout', takeoutContext: 'planned' } })).toMatchObject({ kind: 'invalid-target' })
+  })
+
   it('turns an unfinished leftover target into takeout without changing its source', () => {
     const state = { ...base, meals: [meal('source'), meal('replacement')], plans: [{ id: 'plan', slots: [{ id: 'source', date: '2026-08-17', mealId: 'source' }, { id: 'target', date: '2026-08-18', mealId: 'source', leftoverFromSlotId: 'source' }] }], leftoverLots: [] }
     const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-18', action: { kind: 'takeout', takeoutContext: 'planned' } })
