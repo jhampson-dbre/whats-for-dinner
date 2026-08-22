@@ -10,7 +10,7 @@ import {
 import { appStateV3Schema, type AppStateV3 } from './state/schema'
 import { mealEligibility } from './domain/mealEligibility'
 import { buildWeeklyPlan } from './domain/weeklyPlan'
-import { buildGroceryList, unavailableShoppingTargets } from './domain/grocery'
+import { buildGroceryList, recipeUsesUnavailableIngredient, unavailableShoppingTargets } from './domain/grocery'
 import { adaptSharedMeal, missingLeftoverDependencies, previewRepair, type RepairPreview } from './domain/repair'
 import { classifyRecovery, correctedOutcomes, householdAcceptance, type NeutralReason } from './domain/outcomes'
 import { readRecipeKeeperZip, type RecipeKeeperCandidate } from './import/recipeKeeper'
@@ -76,6 +76,20 @@ function affectedReviewSlots(before: AppStateV3, next: AppStateV3): Set<string> 
   const outcomeSources = [...changedIds(before.outcomes, next.outcomes, (item) => item)].flatMap((id) => [before.outcomes.find((item) => item.id === id), next.outcomes.find((item) => item.id === id)].flatMap((outcome) => outcome?.planSlotId ? [outcome.planSlotId] : []))
   outcomeSources.forEach((id) => sourceSlotIds.add(id))
   if (lotIds.size || sourceSlotIds.size) unfinished((_plan, slot) => Boolean(slot.leftoverLotIds?.some((id) => lotIds.has(id)) || slot.leftoverDependencyIds?.some((id) => lotIds.has(id)) || (slot.leftoverFromSlotId && sourceSlotIds.has(slot.leftoverFromSlotId))) )
+  return affected
+}
+
+function currentReviewSlots(state: AppStateV3): Set<string> {
+  const affected = new Set<string>()
+  for (const plan of state.plans.filter((item) => item.confirmed)) for (const slot of plan.slots) {
+    if (slot.dinnerReadyAt || !slot.mealId) continue
+    const meal = state.meals.find((item) => item.id === slot.mealId)
+    const recipe = state.recipes.find((item) => item.id === slot.recipeId) ?? state.recipes.find((item) => item.mealId === meal?.id)
+    const associated = recipe ? recipe.mealId === meal?.id || meal?.recipeIds?.includes(recipe.id) : !meal?.recipeIds?.length && !state.recipes.some((item) => item.mealId === meal?.id)
+    const efforts = correctedOutcomes(state.outcomes).filter((item) => item.mealId === meal?.id && item.recipeId === recipe?.id && !(item as { leftoverServing?: true }).leftoverServing && item.activeEffortMinutes !== undefined).map((item) => item.activeEffortMinutes!)
+    const effort = efforts.length ? efforts.reduce((total, value) => total + value, 0) / efforts.length : recipe?.prepMinutes
+    if (!meal?.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible || !associated || recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? []) || (state.household.scheduleExceptions.some((item) => item.date === slot.date && item.constrained) && (effort === undefined || effort > 30))) affected.add(`${plan.id}:${slot.id}`)
+  }
   return affected
 }
 
@@ -168,6 +182,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
   const [repairPlanId, setRepairPlanId] = useState(() => initialFailedLeftover?.planId ?? '')
   const [repairSlotId, setRepairSlotId] = useState<string | undefined>(() => initialFailedLeftover?.dependentSlotId)
   const [reviewNeeded, setReviewNeeded] = useState<Set<string>>(() => new Set())
+  const currentReviewSlotIds = currentReviewSlots(state)
 
   const commit = (next: AppStateV3, markReview = true) => {
     if (!appStateV3Schema.safeParse(next).success) { setSaveStatus('unsaved'); setMessage('Changes are invalid and were not applied.'); return { saved: false as const, error: new Error('Invalid app state.') } }
@@ -192,8 +207,9 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
   }
 
   const update = (change: (current: AppStateV3) => AppStateV3, markReview = true) => commit(change(state), markReview)
-  const startCooking = (planId: string, slotId: string) => update((current) => ({ ...current, plans: current.plans.map((plan) => plan.id !== planId ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id !== slotId || slot.cookingStartedAt ? slot : { ...slot, cookingStartedAt: new Date().toISOString() }) }) }))
+  const startCooking = (planId: string, slotId: string) => { if (!currentReviewSlotIds.has(`${planId}:${slotId}`) && !reviewNeeded.has(`${planId}:${slotId}`)) update((current) => ({ ...current, plans: current.plans.map((plan) => plan.id !== planId ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id !== slotId || slot.cookingStartedAt ? slot : { ...slot, cookingStartedAt: new Date().toISOString() }) }) })) }
   const dinnerReady = (planId: string, slotId: string) => {
+    if (currentReviewSlotIds.has(`${planId}:${slotId}`) || reviewNeeded.has(`${planId}:${slotId}`)) return
     const now = new Date()
     update((current) => ({ ...current, plans: current.plans.map((plan) => plan.id !== planId ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id !== slotId || slot.dinnerReadyAt ? slot : { ...slot, dinnerReadyAt: now.toISOString(), feedbackEligibleAt: new Date(now.getTime() + 30 * 60_000).toISOString(), expectedDinerIds: current.household.diners.filter((diner) => diner.active).map((diner) => diner.id) }) }) }))
     setMessage('Dinner recorded. Feedback will be available on a later visit.')
@@ -390,9 +406,10 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     const revision = [...(feedbackPlan.repairRevisions ?? [])].reverse().find((item) => item.slotId === feedbackSlot.id)
     const effort = activeEffortMinutes === '' ? undefined : Number(activeEffortMinutes)
     const acceptance = householdAcceptance(feedback.map((item) => item.acceptance))
-    const outcome = { id: crypto.randomUUID(), planId: feedbackPlan.id, planSlotId: feedbackSlot.id, ...(feedbackSlot.mealId && { mealId: feedbackSlot.mealId }), ...(feedbackSlot.recipeId && { recipeId: feedbackSlot.recipeId }), ...(feedbackCorrectionId && { correctionOfOutcomeId: feedbackCorrectionId }), ...((leftoverConsumer(feedbackSlot) || prior?.leftoverServing) && { leftoverServing: true as const }), recordedAt: new Date().toISOString(), ...(!leftoverConsumer(feedbackSlot) && feedbackSlot.cookingStartedAt && { cookingStartedAt: feedbackSlot.cookingStartedAt }), ...(!leftoverConsumer(feedbackSlot) && effort !== undefined && Number.isInteger(effort) && effort >= 0 && effort <= 10_080 && { activeEffortMinutes: effort }), acceptance, personFeedback: feedback, leftoverCoverage, recoveryClassification: classifyRecovery({ acceptance, repairKind: revision?.kind, takeoutContext: revision?.takeoutContext }) }
-    const dependentIds = leftoverCoverage !== 'one' && leftoverCoverage !== 'more-than-one' ? missingLeftoverDependencies(feedbackPlan, feedbackSlot.id) : []
-    update((current) => ({ ...current, outcomes: [...current.outcomes, outcome], leftoverLots: [...current.leftoverLots.map((lot) => feedbackCorrectionId && lot.sourcePlanId === feedbackPlan.id && lot.sourceSlotId === feedbackSlot.id ? { ...lot, active: false } : lot), ...(leftoverCoverage === 'one' || leftoverCoverage === 'more-than-one') && current.leftoverLots.length < 500 ? [{ id: crypto.randomUUID(), sourcePlanId: feedbackPlan.id, sourceSlotId: feedbackSlot.id, ...(feedbackSlot.mealId && { sourceMealId: feedbackSlot.mealId }), dinnerCoverage: leftoverCoverage, active: true }] : []], plans: current.plans.map((plan) => plan.id !== feedbackPlan.id ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id === feedbackSlot.id ? { ...slot, feedbackDismissed: true } : slot) }) }))
+    const noCookingEvidence = leftoverConsumer(feedbackSlot) || !feedbackSlot.mealId
+    const outcome = { id: crypto.randomUUID(), planId: feedbackPlan.id, planSlotId: feedbackSlot.id, ...(feedbackSlot.mealId && { mealId: feedbackSlot.mealId }), ...(feedbackSlot.recipeId && { recipeId: feedbackSlot.recipeId }), ...(feedbackCorrectionId && { correctionOfOutcomeId: feedbackCorrectionId }), ...((leftoverConsumer(feedbackSlot) || prior?.leftoverServing) && { leftoverServing: true as const }), recordedAt: new Date().toISOString(), ...(!noCookingEvidence && feedbackSlot.cookingStartedAt && { cookingStartedAt: feedbackSlot.cookingStartedAt, dinnerReadyAt: feedbackSlot.dinnerReadyAt }), ...(!noCookingEvidence && effort !== undefined && Number.isInteger(effort) && effort >= 0 && effort <= 10_080 && { activeEffortMinutes: effort }), acceptance, personFeedback: feedback, ...(!noCookingEvidence && { leftoverCoverage }), recoveryClassification: classifyRecovery({ acceptance, repairKind: revision?.kind, takeoutContext: revision?.takeoutContext }) }
+    const dependentIds = !noCookingEvidence && leftoverCoverage !== 'one' && leftoverCoverage !== 'more-than-one' ? missingLeftoverDependencies(feedbackPlan, feedbackSlot.id) : []
+    update((current) => ({ ...current, outcomes: [...current.outcomes, outcome], leftoverLots: [...current.leftoverLots.map((lot) => feedbackCorrectionId && lot.sourcePlanId === feedbackPlan.id && lot.sourceSlotId === feedbackSlot.id ? { ...lot, active: false } : lot), ...(!noCookingEvidence && (leftoverCoverage === 'one' || leftoverCoverage === 'more-than-one') && current.leftoverLots.length < 500 ? [{ id: crypto.randomUUID(), sourcePlanId: feedbackPlan.id, sourceSlotId: feedbackSlot.id, ...(feedbackSlot.mealId && { sourceMealId: feedbackSlot.mealId }), dinnerCoverage: leftoverCoverage, active: true }] : [])], plans: current.plans.map((plan) => plan.id !== feedbackPlan.id ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id === feedbackSlot.id ? { ...slot, feedbackDismissed: true } : slot) }) }))
     setFeedbackTarget(undefined); setFeedbackCorrectionId(undefined); setPersonFeedback({}); setLeftoverCoverage('none'); setActiveEffortMinutes('')
     if (dependentIds[0]) { setRepairPlanId(feedbackPlan.id); setRepairSlotId(dependentIds[0]); setRepairOpen(true); setFailedLeftover({ sourceSlotId: feedbackSlot.id }); setMessage('Expected leftovers are insufficient. Choose and confirm the smallest repair.') } else setMessage('Dinner feedback recorded.')
   }
@@ -450,15 +467,16 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
         {state.plans.filter((plan) => plan.confirmed).map((plan) => <div key={plan.id}><h3>Current weekly plan</h3><ol>{plan.slots.map((slot) => {
           const name = state.meals.find((meal) => meal.id === slot.mealId)?.name ?? 'Takeout'
           const outcome = correctedOutcomes(state.outcomes).find((item) => item.planId === plan.id && item.planSlotId === slot.id)
-          return <li key={slot.id}>{slot.date}: {name}{slot.leftoverFromSlotId && ' (planned leftovers)'} {reviewNeeded.has(`${plan.id}:${slot.id}`) && <button onClick={() => { setRepairPlanId(plan.id); setRepairSlotId(slot.id); setRepairOpen(false); setRepairPreview(undefined) }}>Review needed</button>} {slot.mealId && !leftoverConsumer(slot) && !slot.cookingStartedAt && !slot.dinnerReadyAt && <button onClick={() => startCooking(plan.id, slot.id)}>Start cooking {name}</button>} {slot.mealId && !slot.dinnerReadyAt && <button disabled={!slot.cookingStartedAt && !leftoverConsumer(slot)} onClick={() => dinnerReady(plan.id, slot.id)}>Dinner’s ready {name}</button>} {slot.dinnerReadyAt && <small> Dinner recorded.</small>} {outcome ? <button onClick={() => openFeedback(plan.id, slot.id, outcome.id)}>Correct feedback</button> : slot.dinnerReadyAt && slot.feedbackEligibleAt && slot.feedbackEligibleAt <= new Date().toISOString() && <button onClick={() => openFeedback(plan.id, slot.id)}>Add feedback</button>}</li>
+          const needsReview = reviewNeeded.has(`${plan.id}:${slot.id}`) || currentReviewSlotIds.has(`${plan.id}:${slot.id}`)
+          return <li key={slot.id}>{slot.date}: {name}{slot.leftoverFromSlotId && ' (planned leftovers)'} {needsReview && <button onClick={() => { setRepairPlanId(plan.id); setRepairSlotId(slot.id); setRepairOpen(false); setRepairPreview(undefined) }}>Review needed</button>} {slot.mealId && !leftoverConsumer(slot) && !slot.cookingStartedAt && !slot.dinnerReadyAt && <button disabled={needsReview} onClick={() => startCooking(plan.id, slot.id)}>Start cooking {name}</button>} {!slot.dinnerReadyAt && <button disabled={needsReview || Boolean(slot.mealId && !slot.cookingStartedAt && !leftoverConsumer(slot))} onClick={() => dinnerReady(plan.id, slot.id)}>Dinner’s ready {name}</button>} {slot.dinnerReadyAt && <small> Dinner recorded.</small>} {outcome ? <button onClick={() => openFeedback(plan.id, slot.id, outcome.id)}>Correct feedback</button> : slot.dinnerReadyAt && slot.feedbackEligibleAt && slot.feedbackEligibleAt <= new Date().toISOString() && <button onClick={() => openFeedback(plan.id, slot.id)}>Add feedback</button>}</li>
         })}</ol></div>)}
       </section>
       {feedbackPlan && feedbackSlot && <section aria-labelledby="feedback-heading">
         <h2 id="feedback-heading">Dinner feedback</h2>
         <p>{feedbackMeal?.name ?? 'Dinner'} feedback is saved as raw household and person evidence.</p>
         {(feedbackSlot.expectedDinerIds ?? state.household.diners.filter((diner) => diner.active).map((diner) => diner.id)).flatMap((dinerId) => state.household.diners.filter((diner) => diner.id === dinerId)).map((diner) => <label key={diner.id}>{diner.name}<select aria-label={`Feedback for ${diner.name}`} value={personFeedback[diner.id] ?? 'absent'} onChange={(event) => setPersonFeedback((current) => ({ ...current, [diner.id]: event.target.value as FeedbackChoice }))}><option value="accepted">Ate it</option><option value="rejected">Refused it</option><option value="absent">Absent</option><option value="ate-separately">Ate separately</option><option value="not-hungry">Not hungry</option></select></label>)}
-        {!leftoverConsumer(feedbackSlot) && <label>Active effort minutes<input aria-label="Active effort minutes" type="number" min="0" max="10080" value={activeEffortMinutes} onChange={(event) => setActiveEffortMinutes(event.target.value)} /></label>}
-        <label>Leftover coverage<select aria-label="Leftover coverage" value={leftoverCoverage} onChange={(event) => setLeftoverCoverage(event.target.value as typeof leftoverCoverage)}><option value="none">None</option><option value="some">Some, not a dinner</option><option value="one">One dinner</option><option value="more-than-one">More than one dinner</option></select></label>
+        {!leftoverConsumer(feedbackSlot) && feedbackSlot.mealId && <label>Active effort minutes<input aria-label="Active effort minutes" type="number" min="0" max="10080" value={activeEffortMinutes} onChange={(event) => setActiveEffortMinutes(event.target.value)} /></label>}
+        {!leftoverConsumer(feedbackSlot) && feedbackSlot.mealId && <label>Leftover coverage<select aria-label="Leftover coverage" value={leftoverCoverage} onChange={(event) => setLeftoverCoverage(event.target.value as typeof leftoverCoverage)}><option value="none">None</option><option value="some">Some, not a dinner</option><option value="one">One dinner</option><option value="more-than-one">More than one dinner</option></select></label>}
         <p className="actions"><button onClick={submitFeedback}>Save feedback</button><button onClick={() => { setFeedbackTarget(undefined); setFeedbackCorrectionId(undefined); update((current) => ({ ...current, plans: current.plans.map((plan) => plan.id !== feedbackPlan.id ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id === feedbackSlot.id ? { ...slot, feedbackDismissed: true } : slot) }) })) }}>Not now</button></p>
       </section>}
       {state.plans.some((plan) => plan.confirmed) && <section aria-labelledby="shopping-heading">

@@ -151,7 +151,7 @@ describe('V1 state validation', () => {
     expect(loadAppState(storage)).toEqual({ kind: 'ready', state })
   })
 
-  it('rejects a ready dinner without cooking start and ambiguous outcome corrections', () => {
+  it('allows a takeout dinner to be ready without cooking while preserving the cooking invariant', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'meal-1', name: 'Tacos', active: true })
     state.plans.push({ id: 'plan-1', slots: [{ id: 'slot-1', date: '2026-08-17', mealId: 'meal-1', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }] } as never)
@@ -161,6 +161,9 @@ describe('V1 state validation', () => {
     state.plans[0].slots[0] = { ...state.plans[0].slots[0], cookingStartedAt: '2026-08-17T17:30:00.000Z' } as never
     state.outcomes.push({ id: 'old', planId: 'plan-1', planSlotId: 'slot-1', mealId: 'meal-1' }, { id: 'fork-a', planId: 'plan-1', planSlotId: 'slot-1', mealId: 'meal-1', correctionOfOutcomeId: 'old' }, { id: 'fork-b', planId: 'plan-1', planSlotId: 'slot-1', mealId: 'meal-1', correctionOfOutcomeId: 'old' })
     expect(() => importAppState(JSON.stringify(state))).toThrow()
+    state.outcomes = []
+    state.plans[0].slots[0] = { id: 'takeout', date: '2026-08-18', dinnerReadyAt: '2026-08-18T18:00:00.000Z' } as never
+    expect(importAppState(JSON.stringify(state))).toEqual(state)
   })
 
   it('allows a non-adjacent planned-leftover dinner to be ready without cooking', () => {

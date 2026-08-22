@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
 import recipeFixture from './import/recipeKeeper.fixture.html?raw'
 import App from './App'
+import { classifyRecovery } from './domain/outcomes'
 import { APP_STATE_STORAGE_KEY, createEmptyAppState } from './state/storage'
 
 function backup(mealId: string) {
@@ -511,11 +512,70 @@ describe('weekly planning', () => {
     state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'tacos' }] } as never)
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
-    render(<App />)
+    const view = render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Start cooking Tacos' }))
     expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Safety review for Tacos'), { target: { value: 'rejected' } })
+    fireEvent.change(screen.getByLabelText('Hard restriction'), { target: { value: 'Peanuts' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add restriction' }))
     expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Dinner’s ready Tacos' })).toBeDisabled()
+    view.unmount(); render(<App />)
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Dinner’s ready Tacos' })).toBeDisabled()
+  })
+
+  it.each([
+    ['unknown', undefined],
+    ['slow', 31],
+  ] as const)('persists constrained-night review when hands-on effort is %s', (_label, prepMinutes) => {
+    const state = createEmptyAppState()
+    state.household.scheduleExceptions.push({ id: 'late', date: '2026-08-17', constrained: true })
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' })
+    state.recipes.push({ id: 'recipe', title: 'Tacos', mealId: 'tacos', prepMinutes })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'tacos', recipeId: 'recipe' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    const view = render(<App />)
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeDisabled()
+    view.unmount(); render(<App />)
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeDisabled()
+  })
+
+  it('does not review a valid meal-linked recipe fallback', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' })
+    state.recipes.push({ id: 'recipe', title: 'Tacos', mealId: 'tacos' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'tacos' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeEnabled()
+  })
+
+  it('persists unavailable-shopping review using a meal-linked recipe fallback', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' })
+    state.recipes.push({ id: 'recipe', title: 'Tacos', mealId: 'tacos', ingredients: ['1 cup tomatoes'] })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'tacos' }], shopping: { confirmedAt: '2026-08-17T12:00:00.000Z', partial: false, skippedIncompleteMealIds: [], items: [{ label: '1 cup tomatoes', sourceLines: ['1 cup tomatoes'], mealIds: ['tacos'], perishable: false, availability: 'unavailable' }] } } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    const view = render(<App />)
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeDisabled()
+    view.unmount(); render(<App />)
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeDisabled()
+  })
+
+  it.each([
+    ['unforeseeable-disruption', 'accepted', 'successful'],
+    ['predictable-planning-or-acceptance-failure', 'accepted', 'unsuccessful'],
+    ['planned', 'rejected', 'unsuccessful'],
+  ] as const)('classifies repair takeout with %s and %s feedback as %s', (takeoutContext, acceptance, result) => {
+    expect(classifyRecovery({ repairKind: 'takeout', takeoutContext, acceptance })).toBe(result)
   })
 
   it('does not mark an unrelated confirmed plan after a name-only meal edit', () => {
@@ -885,7 +945,7 @@ describe('shopping and repair', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Swap with Soup' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
 
-    expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Review needed' })).toHaveLength(2)
   })
 
   it('keeps a repair preview, notices, storage, and rendered plan unchanged when repair confirmation fails V3 validation', () => {
@@ -1166,6 +1226,8 @@ describe('cooking outcomes', () => {
     expect(outcome).not.toHaveProperty('activeEffortMinutes')
     expect(outcome).not.toHaveProperty('cookingStartedAt')
     expect(outcome).not.toHaveProperty('dinnerReadyAt')
+    expect(outcome).not.toHaveProperty('leftoverCoverage')
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').leftoverLots).toEqual([])
   })
 
   it('records an actual leftover dinner without showing cooking controls or saving cooking metrics', () => {
@@ -1191,6 +1253,28 @@ describe('cooking outcomes', () => {
     expect(outcome).not.toHaveProperty('activeEffortMinutes')
     expect(outcome).not.toHaveProperty('cookingStartedAt')
     expect(outcome).not.toHaveProperty('dinnerReadyAt')
+  })
+
+  it('records ordinary elapsed time but neither effort nor leftovers for takeout', () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-08-19T18:00:00.000Z'))
+    const state = createEmptyAppState()
+    state.household.diners.push({ id: 'ava', name: 'Ava', active: true })
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'cook', date: '2026-08-17', mealId: 'tacos', cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T17:25:00.000Z', feedbackEligibleAt: '2020-01-01T00:00:00.000Z', feedbackDismissed: true }, { id: 'takeout', date: '2026-08-19' }], repairRevisions: [{ id: 'takeout-repair', createdAt: '2026-08-19T17:00:00.000Z', slotId: 'takeout', kind: 'takeout', takeoutContext: 'planned' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    const view = render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes[0]).toMatchObject({ dinnerReadyAt: '2026-08-17T17:25:00.000Z' })
+    fireEvent.click(screen.getByRole('button', { name: 'Dinner’s ready Takeout' }))
+    view.unmount(); vi.setSystemTime(new Date('2026-08-19T18:31:00.000Z')); render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
+    fireEvent.change(screen.getByLabelText('Feedback for Ava'), { target: { value: 'accepted' } })
+    expect(screen.queryByLabelText('Active effort minutes')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Leftover coverage')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes[1]).toMatchObject({ recoveryClassification: 'successful' })
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes[1]).not.toHaveProperty('cookingStartedAt')
   })
 
   it('hides recipe-less and same-recipe simpler adaptations', () => {
