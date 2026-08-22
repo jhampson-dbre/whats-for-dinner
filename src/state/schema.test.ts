@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createEmptyAppState, importAppState, loadAppState, APP_STATE_STORAGE_KEY } from './storage'
+import { appStateV2Schema, appStateV3Schema } from './schema'
 
 describe('V1 state validation', () => {
   it('rejects an explicit leftover-serving outcome outside a leftover consumer slot', () => {
@@ -167,6 +168,13 @@ describe('V1 state validation', () => {
     state.meals.push({ id: 'meal-1', name: 'Soup', active: true })
     state.plans.push({ id: 'plan-1', slots: [{ id: 'source', date: '2026-08-17', mealId: 'meal-1' }, { id: 'normal', date: '2026-08-18', mealId: 'meal-1' }, { id: 'target', date: '2026-08-19', mealId: 'meal-1', leftoverFromSlotId: 'source', dinnerReadyAt: '2026-08-19T18:00:00.000Z' }] } as never)
     expect(importAppState(JSON.stringify(state))).toEqual(state)
+  })
+
+  it('keeps actual-leftover dinner-ready exemption V3-only', () => {
+    const actualLotDinner = (schemaVersion: 2 | 3) => ({ schemaVersion, household: { diners: [], hardRestrictions: [], scheduleExceptions: [] }, meals: [{ id: 'meal-1', name: 'Soup', active: true }], recipes: [], plans: [{ id: 'plan-1', slots: [{ id: 'source', date: '2026-08-17', mealId: 'meal-1' }, { id: 'target', date: '2026-08-18', mealId: 'meal-1', leftoverLotIds: ['lot-1'], dinnerReadyAt: '2026-08-18T18:00:00.000Z' }] }], leftoverLots: [{ id: 'lot-1', sourcePlanId: 'plan-1', sourceSlotId: 'source', sourceMealId: 'meal-1', active: true }], outcomes: [] })
+
+    expect(appStateV2Schema.safeParse(actualLotDinner(2)).success).toBe(false)
+    expect(appStateV3Schema.safeParse(actualLotDinner(3)).success).toBe(true)
   })
 
   it('rejects outcome and leftover references that disagree with their source slot', () => {

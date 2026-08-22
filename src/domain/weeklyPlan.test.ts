@@ -44,6 +44,29 @@ describe('weekly plan', () => {
     expect(preview).toMatchObject({ kind: 'repair', perishableRisks: [{ itemId: 'milk', sourceSlotId: 'target', sourceLine: '1 cup milk' }] })
     expect(JSON.stringify(state.plans[0].shopping)).toBe(before)
   })
+
+  it('uses selected recipe effort when refilling a constrained repair', () => {
+    const state = { ...base, household: { ...base.household, scheduleExceptions: [{ date: '2026-08-17', constrained: true }] }, meals: [meal('slow', { recipeIds: ['slow-v'] }), meal('fast', { recipeIds: ['fast-v', 'other-v'] })], recipes: [{ id: 'slow-v', prepMinutes: 10 }, { id: 'fast-v', prepMinutes: 10 }, { id: 'other-v', prepMinutes: 50 }], outcomes: [{ id: 'slow-effort', mealId: 'slow', recipeId: 'slow-v', activeEffortMinutes: 31 }, { id: 'other-effort', mealId: 'fast', recipeId: 'other-v', activeEffortMinutes: 60 }], plans: [{ id: 'plan', slots: [{ id: 'target', date: '2026-08-17', mealId: 'slow', recipeId: 'slow-v' }] }], leftoverLots: [] }
+    const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'replan' } })
+
+    expect(preview).toMatchObject({ kind: 'repair' })
+    if (preview.kind === 'repair') expect(preview.plan.slots[0]).toMatchObject({ mealId: 'fast', recipeId: 'fast-v' })
+  })
+
+  it('rejects simpler repairs on leftover consumers and swaps with active leftover sources', () => {
+    const meals = [meal('a', { recipeIds: ['a-r', 'a-simple'], adaptations: [{ id: 'simple', recipeId: 'a-simple' }] }), meal('b')]
+    const state = { ...base, meals, recipes: [{ id: 'a-r', mealId: 'a', prepMinutes: 10 }, { id: 'a-simple', mealId: 'a', prepMinutes: 10 }], plans: [{ id: 'plan', slots: [{ id: 'target', date: '2026-08-17', mealId: 'a', recipeId: 'a-r', leftoverLotIds: ['lot'] }, { id: 'source', date: '2026-08-18', mealId: 'b' }, { id: 'dependent', date: '2026-08-19', mealId: 'b', leftoverFromSlotId: 'source' }] }], leftoverLots: [{ id: 'lot', sourceMealId: 'a' }] }
+
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'simpler', recipeId: 'a-simple', adaptationId: 'simple' } })).toMatchObject({ kind: 'invalid-target' })
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'swap', otherDate: '2026-08-18' } })).toMatchObject({ kind: 'invalid-target' })
+  })
+
+  it('rejects confirmed leftovers whose source meal is inactive or unsafe', () => {
+    const state = { ...base, meals: [meal('target'), meal('inactive', { active: false }), meal('unsafe', { safetyReview: 'rejected' })], plans: [{ id: 'plan', slots: [{ id: 'target', date: '2026-08-17', mealId: 'target' }] }], leftoverLots: [{ id: 'inactive-lot', sourceMealId: 'inactive' }, { id: 'unsafe-lot', sourceMealId: 'unsafe' }] }
+
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'leftovers', leftoverLotId: 'inactive-lot' } })).toMatchObject({ kind: 'invalid-target' })
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'leftovers', leftoverLotId: 'unsafe-lot' } })).toMatchObject({ kind: 'invalid-target' })
+  })
   it('returns actionable guidance instead of a confirmable partial plan for one familiar meal', () => {
     expect(buildWeeklyPlan({ ...base, meals: [meal('meal')] }, '2026-08-17')).toMatchObject({ kind: 'guidance', nextStep: expect.stringContaining('active compatible meal') })
   })

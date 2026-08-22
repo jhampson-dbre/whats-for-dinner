@@ -829,6 +829,44 @@ describe('cooking outcomes', () => {
     expect(outcome).not.toHaveProperty('dinnerReadyAt')
   })
 
+  it('records an actual leftover dinner without showing cooking controls or saving cooking metrics', () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-08-19T18:00:00.000Z'))
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'soup', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'soup' }, { id: 'actual', date: '2026-08-19', mealId: 'soup', leftoverLotIds: ['lot'] }] } as never)
+    state.leftoverLots.push({ id: 'lot', sourcePlanId: 'plan', sourceSlotId: 'source', sourceMealId: 'soup', dinnerCoverage: 'one', active: true })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    const view = render(<App />)
+    expect(screen.getAllByRole('button', { name: 'Start cooking Soup' })).toHaveLength(1)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Dinner’s ready Soup' })[1])
+    expect(screen.getByRole('status')).toHaveTextContent('Dinner recorded.')
+    vi.setSystemTime(new Date('2026-08-19T18:31:00.000Z'))
+    view.unmount()
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
+    expect(screen.queryByLabelText('Active effort minutes')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
+    const outcome = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes[0]
+    expect(outcome).toMatchObject({ leftoverServing: true })
+    expect(outcome).not.toHaveProperty('activeEffortMinutes')
+    expect(outcome).not.toHaveProperty('cookingStartedAt')
+    expect(outcome).not.toHaveProperty('dinnerReadyAt')
+  })
+
+  it('hides recipe-less and same-recipe simpler adaptations', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, recipeIds: ['tacos-r'], adaptations: [{ id: 'missing', name: 'Missing recipe', solvesIssue: true, coordinatedCooking: true, noSecondEntree: true, noUnplannedProtein: true, noSeparateTimeline: true, noExtraEffort: true }, { id: 'same', name: 'Same recipe', recipeId: 'tacos-r', solvesIssue: true, coordinatedCooking: true, noSecondEntree: true, noUnplannedProtein: true, noSeparateTimeline: true, noExtraEffort: true }] })
+    state.recipes.push({ id: 'tacos-r', mealId: 'tacos', title: 'Tacos' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-19', mealId: 'tacos', recipeId: 'tacos-r' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
+    expect(screen.queryByRole('button', { name: 'Use Missing recipe' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Use Same recipe' })).not.toBeInTheDocument()
+  })
+
   it('supersedes a corrected leftover lot instead of leaving two active lots', () => {
     const state = createEmptyAppState()
     state.household.diners.push({ id: 'ava', name: 'Ava', active: true })

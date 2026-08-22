@@ -144,7 +144,7 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
     const meal = state.meals.find((item) => item.id === target.mealId)
     const action = request.action as Extract<RepairAction, { kind: 'simpler' }>
     const recipe = state.recipes.find((item) => item.id === action.recipeId)
-    if (!action.adaptationId || action.recipeId === target.recipeId || !meal?.adaptations?.some((item) => item.id === action.adaptationId && item.recipeId === action.recipeId) || !validRecipe(meal, recipe, target.date)) return { kind: 'invalid-target', nextStep: 'Choose a saved compatible simpler recipe.' }
+    if (target.leftoverFromSlotId || target.leftoverLotIds?.length || !action.adaptationId || action.recipeId === target.recipeId || !meal?.adaptations?.some((item) => item.id === action.adaptationId && item.recipeId === action.recipeId) || !validRecipe(meal, recipe, target.date)) return { kind: 'invalid-target', nextStep: 'Choose a saved compatible simpler recipe.' }
     replace({ recipeId: action.recipeId })
   } else if (request.action.kind === 'recovery') {
     const meal = state.meals.find((item) => item.id === (request.action as Extract<RepairAction, { kind: 'recovery' }>).mealId)
@@ -156,11 +156,13 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
   else if (request.action.kind === 'leftovers') {
     const lot = repairState.leftoverLots.find((item) => item.id === (request.action as Extract<RepairAction, { kind: 'leftovers' }>).leftoverLotId && item.active !== false)
     if (!lot || repairState.plans.some((candidate) => candidate.slots.some((slot) => slot.id !== target.id && slot.leftoverLotIds?.includes(lot.id)))) return { kind: 'invalid-target', nextStep: 'Choose an available leftover lot.' }
+    const sourceMeal = repairState.meals.find((meal) => meal.id === lot.sourceMealId)
+    if (!sourceMeal?.active || !mealEligibility({ hardRestrictions: repairState.household.hardRestrictions, safetyReview: sourceMeal.safetyReview }).eligible) return { kind: 'invalid-target', nextStep: 'Choose an eligible leftover source.' }
     consumedLotIds = [lot.id]
-    replace({ mealId: lot.sourceMealId ?? target.mealId, recipeId: undefined, leftoverFromSlotId: undefined, leftoverLotIds: [lot.id] })
+    replace({ mealId: sourceMeal.id, recipeId: undefined, leftoverFromSlotId: undefined, leftoverLotIds: [lot.id] })
   } else if (request.action.kind === 'swap') {
     const other = slots.find((item) => item.date === (request.action as Extract<RepairAction, { kind: 'swap' }>).otherDate)
-    if (!other || other.dinnerReadyAt || target.leftoverFromSlotId || other.leftoverFromSlotId) return { kind: 'invalid-target', nextStep: 'Choose another unfinished unlinked slot.' }
+    if (!other || other.dinnerReadyAt || target.leftoverFromSlotId || other.leftoverFromSlotId || plan.slots.some((slot) => slot.leftoverFromSlotId === other.id && !slot.dinnerReadyAt)) return { kind: 'invalid-target', nextStep: 'Choose another unfinished unlinked slot.' }
     const original = { mealId: target.mealId, recipeId: target.recipeId }
     replace({ mealId: other.mealId, recipeId: other.recipeId }); Object.assign(other, original); changed.add(other.id)
   } else if (request.action.kind === 'replan') replace({ recipeId: recipeFor(state.meals.find((meal) => meal.id === target.mealId)!, state.recipes)?.id })
@@ -171,7 +173,7 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
     const recipe = recipeFor(meal, state.recipes)
     if (recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? [])) return false
     const constrained = state.household.scheduleExceptions.some((exception) => exception.date === date && exception.constrained)
-    return !constrained || (recipe?.prepMinutes !== undefined && recipe.prepMinutes <= 30)
+    return !constrained || ((selectedRecipeEffort(state, meal, recipe) ?? Infinity) <= 30)
   })
   for (const slot of closure) {
     const candidate = candidateFor(slot.date)
