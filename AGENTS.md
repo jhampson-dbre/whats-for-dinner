@@ -40,6 +40,10 @@ gates, validators, or review routing.
 - Behavior changes use focused TDD: demonstrate the expected failing test, make the
   smallest passing change using existing or native mechanisms, then run proportionate
   verification.
+- Do not close a user-visible multi-task feature while a known in-scope lifecycle is
+  unsupported. Before completion, run one executable acceptance path across its task
+  boundaries that exercises its defining change or recovery behavior; a broad matrix is
+  not required.
 - Before final integration, run one bounded `$ponytail-review` proposal pass only when a
   stabilized green diff adds or materially reshapes control/data flow, state, side
   effects, boundaries, dependencies, configuration, or reusable machinery. Proposals
