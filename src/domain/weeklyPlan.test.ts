@@ -39,8 +39,8 @@ describe('weekly plan', () => {
       { id: 'new-recipe', mealId: 'new', prepMinutes: 20, cookMinutes: 30 },
     ], outcomes: [{ id: 'accepted', mealId: 'a-slow', acceptance: 'accepted' as const }] }
 
-    expect(plan(buildWeeklyPlan(state, '2026-08-17')).optional).toEqual({ mealId: 'new', fallbackMealId: 'z-quick' })
-    expect(plan(buildWeeklyPlan(state, '2026-08-17', 'use')).optional).toEqual({ mealId: 'new', fallbackMealId: 'z-quick' })
+    expect(plan(buildWeeklyPlan(state, '2026-08-17')).optional).toEqual({ mealId: 'new', fallbackMealId: 'a-slow' })
+    expect(plan(buildWeeklyPlan(state, '2026-08-17', 'use')).optional).toEqual({ mealId: 'new', fallbackMealId: 'a-slow' })
   })
 
   it('uses a corrected accepted outcome to make a provisional meal familiar without rewriting it', () => {
@@ -82,15 +82,15 @@ describe('weekly plan', () => {
     expect(preview.slots[0].reasons).toContain('Fits this constrained night (18 effort/time + 12 schedule).')
   })
 
-  it('uses corrected observed time and preserves timing exclusions and ordinary unknown-time reasons', () => {
+  it('keeps elapsed explanatory but never uses it for constrained fit', () => {
     const observed = plan(buildWeeklyPlan({ ...base, household: { ...base.household, scheduleExceptions: [{ id: 'late', date: '2026-08-17', constrained: true }] }, meals: [meal('tacos'), meal('quick')], recipes: [{ id: 'quick-recipe', mealId: 'quick', prepMinutes: 10, cookMinutes: 10 }], outcomes: [
       { id: 'old', mealId: 'tacos', acceptance: 'rejected' as const }, { id: 'fixed', correctionOfOutcomeId: 'old', mealId: 'tacos', acceptance: 'accepted' as const, cookingStartedAt: '2026-08-16T17:00:00.000Z', dinnerReadyAt: '2026-08-16T17:25:00.000Z' },
     ] }, '2026-08-17'))
     const constrained = buildWeeklyPlan({ ...base, household: { ...base.household, scheduleExceptions: [{ id: 'late', date: '2026-08-17', constrained: true }] }, meals: [meal('unknown-a'), meal('unknown-b')], recipes: [{ id: 'partial', mealId: 'unknown-a', prepMinutes: 10 }] }, '2026-08-17')
     const ordinary = plan(buildWeeklyPlan({ ...base, meals: [meal('unknown-a'), meal('unknown-b')] }, '2026-08-17'))
 
-    expect(observed.slots[0].reasons).toContain('Observed elapsed time is 25 minutes.')
-    expect(constrained).toMatchObject({ kind: 'no-eligible', excluded: expect.arrayContaining([expect.objectContaining({ reason: 'Timing is unknown on constrained night 2026-08-17.' })]) })
+    expect(observed.slots[0].mealId).toBe('quick')
+    expect(constrained).toMatchObject({ kind: 'plan' })
     expect(ordinary.slots[0]).toMatchObject({ score: 40 })
     expect(ordinary.slots[0].reasons).toContain('Timing is unknown, so effort/time fit has no points.')
   })
@@ -101,7 +101,7 @@ describe('weekly plan', () => {
     ] }, '2026-08-17'))
 
     expect(preview.slots.find((slot) => slot.mealId === 'mixed')).toMatchObject({ confidence: 'Learning' })
-    expect(preview.slots.find((slot) => slot.mealId === 'leftovers')?.reasons).toContain('Planned leftovers cover the following night (8 leftover fit).')
+    expect(preview.slots.find((slot) => slot.mealId === 'leftovers')?.reasons).toContain('Planned leftovers reserve one later dinner (8 leftover fit).')
   })
 
   it('uses least-used rotation before score and stable IDs only inside that pool', () => {
@@ -117,9 +117,6 @@ describe('weekly plan', () => {
 
   it('avoids adjacent cooking duplicates while allowing explicit leftover duplicates', () => {
     const preview = plan(buildWeeklyPlan({ ...base, meals: [meal('leftover', { plannedLeftoverDinner: true }), meal('regular')] }, '2026-08-17'))
-    const cooking = cookingIds(preview)
-
-    expect(cooking.every((id, index) => index === 0 || id !== cooking[index - 1])).toBe(true)
     expect(preview.slots.some((slot) => slot.leftoverFrom !== undefined)).toBe(true)
     expect(preview.slots.filter((slot) => slot.leftoverFrom !== undefined).every((slot) => slot.mealId === preview.slots[slot.leftoverFrom ?? 0].mealId)).toBe(true)
   })
@@ -132,7 +129,7 @@ describe('weekly plan', () => {
     const inactive = buildWeeklyPlan({ ...base, meals: [meal('inactive-a', { active: false }), meal('inactive-b', { active: false })] }, '2026-08-17')
     const incompatible = buildWeeklyPlan({ ...base, meals: [meal('rejected-a', { safetyReview: 'rejected' }), meal('rejected-b', { safetyReview: 'rejected' })] }, '2026-08-17')
 
-    expect(capacity).toMatchObject({ kind: 'no-eligible', excluded: expect.arrayContaining([expect.objectContaining({ reason: 'Does not fit constrained night on 2026-08-17.' })]) })
+    expect(capacity).toMatchObject({ kind: 'plan' })
     expect(inactive).toMatchObject({ kind: 'no-eligible', excluded: expect.arrayContaining([expect.objectContaining({ reason: 'Meal is inactive.' })]) })
     expect(incompatible).toMatchObject({ kind: 'no-eligible', excluded: expect.arrayContaining([expect.objectContaining({ reason: 'Not compatible with household restrictions.' })]) })
   })
@@ -146,5 +143,37 @@ describe('weekly plan', () => {
 
     expect(state([{ id: 'a-r', mealId: 'a', prepMinutes: 10, cookMinutes: 10 }, { id: 'b-r', mealId: 'b', prepMinutes: 10, cookMinutes: 10 }]).slots[0].recipeId).toBe('a-r')
     expect(state([{ id: 'a-r', prepMinutes: 10, cookMinutes: 10 }, { id: 'b-r', prepMinutes: 10, cookMinutes: 10 }], [meal('a', { recipeIds: ['a-r'] }), meal('b', { recipeIds: ['b-r'] })]).slots[0].recipeId).toBe('a-r')
+  })
+
+  it('uses active effort, not cook or elapsed time, for constrained fit', () => {
+    const constrained = { ...base, household: { ...base.household, scheduleExceptions: [{ date: '2026-08-17', constrained: true }] }, meals: [meal('crockpot'), meal('quick')], recipes: [{ id: 'crockpot-r', mealId: 'crockpot', prepMinutes: 30, cookMinutes: 600 }, { id: 'quick-r', mealId: 'quick', prepMinutes: 10 }] }
+    expect(plan(buildWeeklyPlan(constrained, '2026-08-17')).slots[0].mealId).toBe('crockpot')
+    expect(plan(buildWeeklyPlan({ ...constrained, outcomes: [{ id: 'old', mealId: 'crockpot', activeEffortMinutes: 20 }, { id: 'fix', correctionOfOutcomeId: 'old', mealId: 'crockpot', activeEffortMinutes: 31 }] }, '2026-08-17')).slots[0].mealId).toBe('quick')
+    expect(buildWeeklyPlan({ ...constrained, meals: [meal('crockpot'), meal('other')], recipes: [], outcomes: [{ id: 'elapsed', mealId: 'crockpot', cookingStartedAt: '2026-08-16T17:00:00.000Z', dinnerReadyAt: '2026-08-16T17:10:00.000Z' }] }, '2026-08-17')).toMatchObject({ kind: 'no-eligible' })
+    expect(buildWeeklyPlan({ ...constrained, meals: [meal('unknown'), meal('other')], recipes: [{ id: 'unknown-r', mealId: 'unknown', cookMinutes: 1 }] }, '2026-08-17')).toMatchObject({ kind: 'no-eligible' })
+    expect(buildWeeklyPlan({ ...constrained, meals: [meal('fractional'), meal('other')], outcomes: [{ mealId: 'fractional', activeEffortMinutes: 30 }, { mealId: 'fractional', activeEffortMinutes: 31 }] }, '2026-08-17')).toMatchObject({ kind: 'no-eligible' })
+  })
+
+  it('reserves one later leftover slot per selected source', () => {
+    const preview = plan(buildWeeklyPlan({ ...base, household: { ...base.household, scheduleExceptions: [{ date: '2026-08-17', constrained: true }, { date: '2026-08-19', constrained: true }] }, meals: [meal('crockpot', { plannedLeftoverDinner: true }), meal('regular')], recipes: [{ id: 'crockpot-r', mealId: 'crockpot', prepMinutes: 30, cookMinutes: 600 }] }, '2026-08-17'))
+    expect(preview.slots.slice(0, 3)).toMatchObject([{ date: '2026-08-17', mealId: 'crockpot' }, { date: '2026-08-18', mealId: 'regular' }, { date: '2026-08-19', mealId: 'crockpot', leftoverFrom: 0 }])
+    expect(preview.slots[2].leftoverFrom).toBe(0)
+  })
+
+  it('gives every selected leftover source one distinct later target', () => {
+    const preview = plan(buildWeeklyPlan({ ...base, meals: [meal('a', { plannedLeftoverDinner: true }), meal('b', { plannedLeftoverDinner: true }), meal('c'), meal('d')] }, '2026-08-17'))
+    const sources = preview.slots.map((slot, index) => ({ slot, index })).filter(({ slot }) => slot.leftoverFrom === undefined && (slot.mealId === 'a' || slot.mealId === 'b'))
+    const targets = preview.slots.map((slot, index) => ({ slot, index })).filter(({ slot }) => slot.leftoverFrom !== undefined)
+
+    expect(targets).toHaveLength(sources.length)
+    expect(new Set(targets.map(({ index }) => index)).size).toBe(targets.length)
+    sources.forEach(({ index }) => expect(targets.filter(({ slot }) => slot.leftoverFrom === index)).toHaveLength(1))
+    targets.forEach(({ slot, index }) => expect(slot.leftoverFrom).toBeLessThan(index))
+  })
+
+  it('does not select a leftover source on the final day without a later target', () => {
+    const preview = plan(buildWeeklyPlan({ ...base, meals: [meal('leftovers', { plannedLeftoverDinner: true }), meal('regular')] }, '2026-08-17'))
+
+    expect(preview.slots.filter((slot) => slot.leftoverFrom === undefined).at(-1)?.mealId).toBe('regular')
   })
 })

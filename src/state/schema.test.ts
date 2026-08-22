@@ -154,6 +154,13 @@ describe('V1 state validation', () => {
     expect(() => importAppState(JSON.stringify(state))).toThrow()
   })
 
+  it('allows a non-adjacent planned-leftover dinner to be ready without cooking', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan-1', slots: [{ id: 'source', date: '2026-08-17', mealId: 'meal-1' }, { id: 'normal', date: '2026-08-18', mealId: 'meal-1' }, { id: 'target', date: '2026-08-19', mealId: 'meal-1', leftoverFromSlotId: 'source', dinnerReadyAt: '2026-08-19T18:00:00.000Z' }] } as never)
+    expect(importAppState(JSON.stringify(state))).toEqual(state)
+  })
+
   it('rejects outcome and leftover references that disagree with their source slot', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'meal-1', name: 'Soup', active: true }, { id: 'meal-2', name: 'Tacos', active: true })

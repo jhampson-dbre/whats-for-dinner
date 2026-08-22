@@ -44,18 +44,26 @@ export function buildWeeklyPlan(state: PlannerState, startDate: string, optional
   const candidates = [...familiar, ...(optionalSelection ? [optionalMeal] : [])]
   const counts = new Map(candidates.map((meal) => [meal.id, 0]))
   const slots: PlanSlot[] = []
+  const reservations = new Map<number, number>()
   let fallbackMealId: string | undefined
 
   for (let day = 0; day < 7;) {
     const date = dateAfter(startDate, day)
     const constrained = state.household.scheduleExceptions.some((exception) => exception.date === date && exception.constrained)
+    const leftoverFrom = reservations.get(day)
+    if (leftoverFrom !== undefined) {
+      const source = slots[leftoverFrom]
+      slots.push({ ...source, date, leftoverFrom, reasons: ['Planned leftovers from an earlier dinner.', ...source.reasons] })
+      day++
+      continue
+    }
     const ranked = candidates.filter((meal) => meal !== optionalMeal || day === 0).flatMap((meal) => {
       const recipe = recipeFor(meal, state.recipes)
+      const efforts = outcomes.filter((outcome) => outcome.mealId === meal.id && outcome.activeEffortMinutes !== undefined).map((outcome) => outcome.activeEffortMinutes!)
+      const effort = efforts.length ? efforts.reduce((total, value) => total + value, 0) / efforts.length : recipe?.prepMinutes
       const observed = outcomes.filter((outcome) => outcome.mealId === meal.id).map(observedElapsedMinutes).filter((minutes): minutes is number => minutes !== undefined)
-      const timingKnown = observed.length > 0 || recipe?.prepMinutes !== undefined && recipe?.cookMinutes !== undefined
-      const minutes = observed.length ? Math.round(observed.reduce((total, value) => total + value, 0) / observed.length) : (recipe?.prepMinutes ?? 0) + (recipe?.cookMinutes ?? 0)
-      if (constrained && (!timingKnown || minutes > 30)) {
-        const reason = timingKnown ? `Does not fit constrained night on ${date}.` : `Timing is unknown on constrained night ${date}.`
+      if (constrained && (effort === undefined || effort > 30)) {
+        const reason = effort === undefined ? `Timing is unknown on constrained night ${date}.` : `Does not fit constrained night on ${date}.`
         if (!excluded.some((item) => item.mealId === meal.id && item.reason === reason)) excluded.push({ mealId: meal.id, reason })
         return []
       }
@@ -65,15 +73,17 @@ export function buildWeeklyPlan(state: PlannerState, startDate: string, optional
       const rejected = outcomes.filter((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'rejected').length
       const historyScore = accepted || rejected ? Math.round(PLAN_WEIGHTS.acceptanceHistory * accepted / (accepted + rejected)) : PLAN_WEIGHTS.acceptanceHistory / 2
       const confidenceScore = learning.confidence === 'Established' ? PLAN_WEIGHTS.confidence : learning.confidence === 'Learning' ? PLAN_WEIGHTS.confidence / 2 : 0
-      const plannedLeftovers = meal.plannedLeftoverDinner && day < 6
-      const score = historyScore + (timingKnown ? PLAN_WEIGHTS.effortTimeFit : 0) + PLAN_WEIGHTS.scheduleContext + (meal.adaptations?.length ? PLAN_WEIGHTS.sharedAdaptation : 0) + (used ? 0 : PLAN_WEIGHTS.variety) + (plannedLeftovers ? PLAN_WEIGHTS.leftoverFit : 0) + confidenceScore
-      return [{ meal, recipe, score, band: learning.confidence, used, reasons: [
+      const leftoverDay = meal.plannedLeftoverDinner ? [...Array(6 - day)].map((_, offset) => day + offset + 1).find((candidateDay) => !reservations.has(candidateDay) && state.household.scheduleExceptions.some((exception) => exception.date === dateAfter(startDate, candidateDay) && exception.constrained)) ?? [...Array(6 - day)].map((_, offset) => day + offset + 1).find((candidateDay) => !reservations.has(candidateDay)) : undefined
+      if (meal.plannedLeftoverDinner && leftoverDay === undefined) return []
+      const plannedLeftovers = leftoverDay !== undefined
+      const score = historyScore + (effort !== undefined ? PLAN_WEIGHTS.effortTimeFit : 0) + PLAN_WEIGHTS.scheduleContext + (meal.adaptations?.length ? PLAN_WEIGHTS.sharedAdaptation : 0) + (used ? 0 : PLAN_WEIGHTS.variety) + (plannedLeftovers ? PLAN_WEIGHTS.leftoverFit : 0) + confidenceScore
+      return [{ meal, recipe, score, band: learning.confidence, used, leftoverDay, reasons: [
         accepted || rejected ? `Household outcomes contribute ${historyScore}/${PLAN_WEIGHTS.acceptanceHistory}.` : `No household outcome yet (${historyScore}/${PLAN_WEIGHTS.acceptanceHistory} starting point).`,
         constrained ? 'Fits this constrained night (18 effort/time + 12 schedule).' : 'Fits the household schedule.',
-        ...(timingKnown ? observed.length ? [`Observed elapsed time is ${minutes} minutes.`] : [] : ['Timing is unknown, so effort/time fit has no points.']),
+        ...(effort !== undefined ? observed.length ? [`Observed elapsed time is ${Math.round(observed.reduce((total, value) => total + value, 0) / observed.length)} minutes.`] : [] : ['Timing is unknown, so effort/time fit has no points.']),
         meal.adaptations?.length ? 'A saved shared-meal adaptation is available (12 adaptation).' : 'No saved shared-meal adaptation is needed.',
         used ? 'Used again after other options.' : 'Keeps this week varied (12 variety).',
-        ...(plannedLeftovers ? ['Planned leftovers cover the following night (8 leftover fit).'] : []),
+        ...(plannedLeftovers ? ['Planned leftovers reserve one later dinner (8 leftover fit).'] : []),
         `${learning.confidence}: ${learning.confidence === 'Estimated' ? 'no household outcomes yet.' : learning.confidence === 'Learning' ? 'one or two household outcomes.' : 'three or more household outcomes.'}`,
       ] }]
     })
@@ -87,10 +97,8 @@ export function buildWeeklyPlan(state: PlannerState, startDate: string, optional
     const selected = (optionalSelection && day === 0 ? pool.find((item) => item.meal === optionalMeal) : undefined) ?? byScore(pool)
     slots.push({ date, mealId: selected.meal.id, ...(selected.recipe && { recipeId: selected.recipe.id }), score: selected.score, confidence: selected.band, reasons: selected.reasons })
     counts.set(selected.meal.id, selected.used + 1)
-    if (selected.meal.plannedLeftoverDinner && day < 6) {
-      slots.push({ date: dateAfter(startDate, day + 1), mealId: selected.meal.id, ...(selected.recipe && { recipeId: selected.recipe.id }), leftoverFrom: slots.length - 1, score: selected.score, confidence: selected.band, reasons: ['Planned leftovers from the previous dinner.', ...selected.reasons] })
-      day += 2
-    } else day++
+    if (selected.leftoverDay !== undefined) reservations.set(selected.leftoverDay, slots.length - 1)
+    day++
   }
   return { kind: 'plan', slots, excluded, ...(optionalMeal && fallbackMealId && { optional: { mealId: optionalMeal.id, fallbackMealId } }) }
 }

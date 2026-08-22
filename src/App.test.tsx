@@ -358,7 +358,7 @@ describe('weekly planning', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Use this meal' }))
 
-    expect(screen.getByText('That unfamiliar meal cannot fit the first cooking night, so the familiar fallback remains selected.')).toBeInTheDocument()
+    expect(screen.getByText('Your chosen unfamiliar meal is in this preview.')).toBeInTheDocument()
   })
 
   it('shows and persists the actual scored fallback when IDs sort differently', () => {
@@ -372,11 +372,11 @@ describe('weekly planning', () => {
     render(<App />)
     fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
     fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
-    expect(screen.getByText(/No action keeps familiar fallback Z quick/)).toBeInTheDocument()
+    expect(screen.getByText(/No action keeps familiar fallback A slow/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Not for us' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
 
-    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].variants).toEqual([expect.objectContaining({ mealId: 'z-quick', label: 'Familiar fallback for optional unfamiliar meal' })])
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].variants).toEqual([expect.objectContaining({ mealId: 'a-slow', label: 'Familiar fallback for optional unfamiliar meal' })])
   })
 
   it('makes a rejected provisional meal inactive when the weekly plan is confirmed', () => {
@@ -410,6 +410,23 @@ describe('weekly planning', () => {
     const plan = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0]
     expect(plan.slots).toContainEqual(expect.not.objectContaining({ mealId: expect.anything() }))
     expect(plan.repairRevisions).toEqual([expect.objectContaining({ kind: 'takeout', takeoutContext: 'planned' })])
+  })
+
+  it('confirms a non-adjacent leftover link and protects both ends from takeout', () => {
+    const state = createEmptyAppState()
+    state.household.scheduleExceptions.push({ id: 'mon', date: '2026-08-17', constrained: true }, { id: 'wed', date: '2026-08-19', constrained: true })
+    state.meals.push({ id: 'crockpot', name: 'Crockpot', active: true, safetyReview: 'approved', plannedLeftoverDinner: true }, { id: 'regular', name: 'Regular', active: true, safetyReview: 'approved' })
+    state.recipes.push({ id: 'crockpot-r', title: 'Crockpot', mealId: 'crockpot', prepMinutes: 30, cookMinutes: 600 })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    expect(screen.getByRole('button', { name: 'Plan takeout for 2026-08-17' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Plan takeout for 2026-08-19' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
+    const slots = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots
+    expect(slots.find((slot: { date: string }) => slot.date === '2026-08-19').leftoverFromSlotId).toBe(slots.find((slot: { date: string }) => slot.date === '2026-08-17').id)
   })
 
   it('does not carry an old plan incomplete-meal acknowledgement into a new plan', () => {
@@ -785,6 +802,30 @@ describe('cooking outcomes', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes[0]).not.toHaveProperty('activeEffortMinutes')
+  })
+
+  it('records a linked leftover dinner without cooking or effort', () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-08-19T18:00:00.000Z'))
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'soup', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'soup' }, { id: 'normal', date: '2026-08-18', mealId: 'soup' }, { id: 'target', date: '2026-08-19', mealId: 'soup', leftoverFromSlotId: 'source' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    const view = render(<App />)
+    expect(screen.getAllByRole('button', { name: 'Start cooking Soup' })).toHaveLength(2)
+    const ready = screen.getAllByRole('button', { name: 'Dinner’s ready Soup' })
+    fireEvent.click(ready[2])
+    expect(screen.getByRole('status')).toHaveTextContent('Dinner recorded')
+    vi.setSystemTime(new Date('2026-08-19T18:31:00.000Z'))
+    view.unmount()
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
+    expect(screen.queryByLabelText('Active effort minutes')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
+    const outcome = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes[0]
+    expect(outcome).not.toHaveProperty('activeEffortMinutes')
+    expect(outcome).not.toHaveProperty('cookingStartedAt')
+    expect(outcome).not.toHaveProperty('dinnerReadyAt')
   })
 
   it('supersedes a corrected leftover lot instead of leaving two active lots', () => {
