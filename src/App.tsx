@@ -7,19 +7,19 @@ import {
   saveAppState,
   type LoadResult,
 } from './state/storage'
-import { appStateV3Schema, type AppStateV3 } from './state/schema'
+import { appStateV4Schema, type AppStateV4 } from './state/schema'
 import { mealEligibility } from './domain/mealEligibility'
-import { buildWeeklyPlan } from './domain/weeklyPlan'
+import { buildWeeklyPlan, effectiveCapacity } from './domain/weeklyPlan'
 import { buildGroceryList, recipeUsesUnavailableIngredient, unavailableShoppingTargets } from './domain/grocery'
 import { adaptSharedMeal, missingLeftoverDependencies, previewRepair, type RepairPreview } from './domain/repair'
 import { classifyRecovery, correctedOutcomes, householdAcceptance, type NeutralReason } from './domain/outcomes'
 import { readRecipeKeeperZip, type RecipeKeeperCandidate } from './import/recipeKeeper'
 import './app.css'
 
-type Action = { type: 'replace'; state: AppStateV3 }
+type Action = { type: 'replace'; state: AppStateV4 }
 type FeedbackChoice = 'accepted' | 'rejected' | NeutralReason
 
-function reducer(_state: AppStateV3, action: Action): AppStateV3 {
+function reducer(_state: AppStateV4, action: Action): AppStateV4 {
   return action.state
 }
 
@@ -27,7 +27,7 @@ function leftoverConsumer(slot: { leftoverFromSlotId?: string; leftoverLotIds?: 
   return Boolean(slot.leftoverFromSlotId || slot.leftoverLotIds?.length)
 }
 
-function unresolvedFailedLeftovers(state: AppStateV3): Array<{ planId: string; sourceSlotId: string; dependentSlotId: string; mealId?: string }> {
+function unresolvedFailedLeftovers(state: AppStateV4): Array<{ planId: string; sourceSlotId: string; dependentSlotId: string; mealId?: string }> {
   return correctedOutcomes(state.outcomes).slice().reverse().flatMap((outcome) => {
     if (outcome.leftoverCoverage !== 'none' && outcome.leftoverCoverage !== 'some') return []
     const plan = state.plans.find((candidate) => candidate.id === outcome.planId && candidate.confirmed)
@@ -37,12 +37,12 @@ function unresolvedFailedLeftovers(state: AppStateV3): Array<{ planId: string; s
   })
 }
 
-function withoutUnresolvedLeftoverReservations(state: AppStateV3): AppStateV3 {
+function withoutUnresolvedLeftoverReservations(state: AppStateV4): AppStateV4 {
   const mealIds = new Set(unresolvedFailedLeftovers(state).flatMap((item) => item.mealId ? [item.mealId] : []))
   return mealIds.size ? { ...state, meals: state.meals.map((meal) => mealIds.has(meal.id) ? { ...meal, plannedLeftoverDinner: undefined } : meal) } : state
 }
 
-function shoppingControls(state: AppStateV3, planId: string) {
+function shoppingControls(state: AppStateV4, planId: string) {
   const plan = state.plans.find((candidate) => candidate.id === planId && candidate.confirmed)
   const shopping = plan?.shopping
   const groceries = shopping ? buildGroceryList(state, planId).items : []
@@ -51,11 +51,11 @@ function shoppingControls(state: AppStateV3, planId: string) {
   return { unavailable: itemIds((item) => item.availability === 'unavailable'), skipped: itemIds((item) => item.availability === 'skipped'), perishable: itemIds((item) => item.perishable), skippedIncompleteMeals: new Set(shopping?.skippedIncompleteMealIds) }
 }
 
-function sameRestrictions(a: AppStateV3['household']['hardRestrictions'], b: AppStateV3['household']['hardRestrictions']): boolean {
+function sameRestrictions(a: AppStateV4['household']['hardRestrictions'], b: AppStateV4['household']['hardRestrictions']): boolean {
   return a.length === b.length && a.every((restriction, index) => restriction.id === b[index].id && restriction.label === b[index].label && restriction.dinerId === b[index].dinerId)
 }
 
-function affectedReviewSlots(before: AppStateV3, next: AppStateV3): Set<string> {
+function affectedReviewSlots(before: AppStateV4, next: AppStateV4): Set<string> {
   const affected = new Set<string>()
   const plans = next.plans.filter((plan) => plan.confirmed)
   const add = (planId: string, slotId: string) => affected.add(`${planId}:${slotId}`)
@@ -79,7 +79,7 @@ function affectedReviewSlots(before: AppStateV3, next: AppStateV3): Set<string> 
   return affected
 }
 
-function currentReviewSlots(state: AppStateV3): Set<string> {
+function currentReviewSlots(state: AppStateV4): Set<string> {
   const affected = new Set<string>()
   for (const plan of state.plans.filter((item) => item.confirmed)) for (const slot of plan.slots) {
     if (slot.dinnerReadyAt || !slot.mealId) continue
@@ -88,7 +88,8 @@ function currentReviewSlots(state: AppStateV3): Set<string> {
     const associated = recipe ? recipe.mealId === meal?.id || meal?.recipeIds?.includes(recipe.id) : !meal?.recipeIds?.length && !state.recipes.some((item) => item.mealId === meal?.id)
     const efforts = correctedOutcomes(state.outcomes).filter((item) => item.mealId === meal?.id && item.recipeId === recipe?.id && !(item as { leftoverServing?: true }).leftoverServing && item.activeEffortMinutes !== undefined).map((item) => item.activeEffortMinutes!)
     const effort = efforts.length ? efforts.reduce((total, value) => total + value, 0) / efforts.length : recipe?.prepMinutes
-    if (!meal?.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible || (!leftoverConsumer(slot) && (!associated || recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? []) || (state.household.scheduleExceptions.some((item) => item.date === slot.date && item.constrained) && (effort === undefined || effort > 30))))) affected.add(`${plan.id}:${slot.id}`)
+    const capacity = effectiveCapacity(state, slot.date)
+    if (!meal?.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible || (!leftoverConsumer(slot) && (!associated || recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? []) || (capacity === 'hands-off' ? recipe?.handsOffSlowCooker !== true : capacity === 'constrained' && (effort === undefined || effort > 30))))) affected.add(`${plan.id}:${slot.id}`)
   }
   return affected
 }
@@ -132,7 +133,7 @@ export default function App() {
   return <ReadyApp initialState={loaded.state} initialUnsaved={loaded.unsaved} />
 }
 
-function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppStateV3; initialUnsaved?: boolean }) {
+function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppStateV4; initialUnsaved?: boolean }) {
   const initialFailedLeftover = unresolvedFailedLeftovers(initialState)[0]
   const [state, dispatch] = useReducer(reducer, initialState)
   const [initialShoppingControls] = useState(() => shoppingControls(initialState, ''))
@@ -144,6 +145,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
   const [exceptionDate, setExceptionDate] = useState('')
   const [exceptionNote, setExceptionNote] = useState('')
   const [exceptionConstrained, setExceptionConstrained] = useState(false)
+  const [exceptionHandsOff, setExceptionHandsOff] = useState(false)
   const [mealName, setMealName] = useState('')
   const [plannedLeftoverDinner, setPlannedLeftoverDinner] = useState(false)
   const [candidates, setCandidates] = useState<RecipeKeeperCandidate[]>([])
@@ -184,8 +186,8 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
   const [reviewNeeded, setReviewNeeded] = useState<Set<string>>(() => new Set())
   const currentReviewSlotIds = currentReviewSlots(state)
 
-  const commit = (next: AppStateV3, markReview = true) => {
-    if (!appStateV3Schema.safeParse(next).success) { setSaveStatus('unsaved'); setMessage('Changes are invalid and were not applied.'); return { saved: false as const, error: new Error('Invalid app state.') } }
+  const commit = (next: AppStateV4, markReview = true) => {
+    if (!appStateV4Schema.safeParse(next).success) { setSaveStatus('unsaved'); setMessage('Changes are invalid and were not applied.'); return { saved: false as const, error: new Error('Invalid app state.') } }
     const result = saveAppState(localStorage, next)
     setSaveStatus(result.saved ? 'saved' : 'unsaved')
     setWeeklyPreview(undefined)
@@ -194,7 +196,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     dispatch({ type: 'replace', state: next })
     return result
   }
-  const hydrateShoppingControls = (next: AppStateV3, planId = shoppingPlanId) => {
+  const hydrateShoppingControls = (next: AppStateV4, planId = shoppingPlanId) => {
     const controls = shoppingControls(next, planId)
     setUnavailableItems(controls.unavailable)
     setSkippedItems(controls.skipped)
@@ -206,7 +208,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     if (window.confirm('Reset all current app data?')) commit(createEmptyAppState())
   }
 
-  const update = (change: (current: AppStateV3) => AppStateV3, markReview = true) => commit(change(state), markReview)
+  const update = (change: (current: AppStateV4) => AppStateV4, markReview = true) => commit(change(state), markReview)
   const startCooking = (planId: string, slotId: string) => { if (!currentReviewSlotIds.has(`${planId}:${slotId}`) && !reviewNeeded.has(`${planId}:${slotId}`)) update((current) => ({ ...current, plans: current.plans.map((plan) => plan.id !== planId ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id !== slotId || slot.cookingStartedAt ? slot : { ...slot, cookingStartedAt: new Date().toISOString() }) }) })) }
   const dinnerReady = (planId: string, slotId: string) => {
     if (currentReviewSlotIds.has(`${planId}:${slotId}`) || reviewNeeded.has(`${planId}:${slotId}`)) return
@@ -231,13 +233,19 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     setRestrictionDinerId('')
   }
   const addException = () => {
-    if (!exceptionDate || state.household.scheduleExceptions.length >= 100) return
+    if (!exceptionDate || (state.household.scheduleExceptions.length >= 100 && !state.household.scheduleExceptions.some((item) => item.date === exceptionDate))) return
     const note = exceptionNote.trim()
     if (note.length > 500) return
-    update((current) => ({ ...current, household: { ...current.household, scheduleExceptions: [...current.household.scheduleExceptions, { id: crypto.randomUUID(), date: exceptionDate, ...(note && { note }), ...(exceptionConstrained && { constrained: true }) }] } }))
+    update((current) => {
+      const priorNote = [...current.household.scheduleExceptions].reverse().find((item) => item.date === exceptionDate && item.note)?.note
+      const capacity = exceptionHandsOff ? { handsOff: true as const } : exceptionConstrained ? { constrained: true } : {}
+      const nextNote = note || (Object.keys(capacity).length ? priorNote : undefined)
+      return { ...current, household: { ...current.household, scheduleExceptions: [...current.household.scheduleExceptions.filter((item) => item.date !== exceptionDate), ...(nextNote || Object.keys(capacity).length ? [{ id: crypto.randomUUID(), date: exceptionDate, ...(nextNote && { note: nextNote }), ...capacity }] : [])] } }
+    })
     setExceptionDate('')
     setExceptionNote('')
     setExceptionConstrained(false)
+    setExceptionHandsOff(false)
   }
   const addMeal = () => {
     const name = mealName.trim()
@@ -271,7 +279,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     const slotIds = verified.slots.map(() => crypto.randomUUID())
     const rejectedMealId = optionalAction === 'reject' ? verified.optional?.mealId : undefined
     const takeoutDates = new Set(plannedTakeoutDates)
-    const next: AppStateV3 = { ...state, meals: rejectedMealId ? state.meals.map((meal) => meal.id === rejectedMealId ? { ...meal, active: false } : meal) : state.meals, plans: [...state.plans, {
+    const next: AppStateV4 = { ...state, meals: rejectedMealId ? state.meals.map((meal) => meal.id === rejectedMealId ? { ...meal, active: false } : meal) : state.meals, plans: [...state.plans, {
       id: planId,
       confirmed: true,
       scoreReasons: verified.slots.flatMap((slot) => slot.reasons).filter((reason, index, values) => values.indexOf(reason) === index),
@@ -279,7 +287,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
       slots: verified.slots.map((slot, index) => ({ id: slotIds[index], date: slot.date, ...(!takeoutDates.has(slot.date) && { mealId: slot.mealId }), ...(!takeoutDates.has(slot.date) && slot.recipeId && { recipeId: slot.recipeId }), ...(!takeoutDates.has(slot.date) && slot.leftoverFrom !== undefined && { leftoverFromSlotId: slotIds[slot.leftoverFrom] }), score: slot.score, confidence: slot.confidence, scoreReasons: slot.reasons })),
       ...(plannedTakeoutDates.length && { repairRevisions: verified.slots.flatMap((slot, index) => takeoutDates.has(slot.date) ? [{ id: crypto.randomUUID(), createdAt: new Date().toISOString(), slotId: slotIds[index], kind: 'takeout' as const, takeoutContext: 'planned' as const }] : []) }),
     }] }
-    if (!appStateV3Schema.safeParse(next).success) { commit(next); return }
+    if (!appStateV4Schema.safeParse(next).success) { commit(next); return }
     commit(next)
     hydrateShoppingControls(next)
     setWeeklyPreview(undefined)
@@ -294,7 +302,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
         try {
           const imported = importAppState(raw)
           if (!window.confirm('Replace all current app data with this backup?')) return
-          const next: AppStateV3 = sameRestrictions(state.household.hardRestrictions, imported.household.hardRestrictions) ? imported : { ...imported, meals: imported.meals.map((meal) => ({ ...meal, safetyReview: 'unknown' })) }
+          const next: AppStateV4 = sameRestrictions(state.household.hardRestrictions, imported.household.hardRestrictions) ? imported : { ...imported, meals: imported.meals.map((meal) => ({ ...meal, safetyReview: 'unknown' })) }
           const saved = commit(next).saved
           hydrateShoppingControls(next)
           setMessage(saved ? 'Backup imported.' : 'Loaded but not saved locally.')
@@ -372,8 +380,8 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     if (perishableRisk && !perishableAcknowledged) { setMessage('Acknowledge the confirmed perishable groceries before replacing this meal.'); return }
     if (!window.confirm('Apply this repair?')) return
     const sourceRecipeId = failedLeftover && repairPlan.slots.find((slot) => slot.id === failedLeftover.sourceSlotId)?.recipeId
-    const next: AppStateV3 = { ...state, recipes: failedLeftover?.multiplier ? state.recipes.map((recipe) => recipe.id === sourceRecipeId ? { ...recipe, leftoverQuantityMultiplier: failedLeftover.multiplier } : recipe) as AppStateV3['recipes'] : state.recipes, meals: failedLeftover?.remove ? state.meals.map((meal) => meal.id === repairPlan.slots.find((slot) => slot.id === failedLeftover.sourceSlotId)?.mealId ? { ...meal, plannedLeftoverDinner: undefined } : meal) : state.meals, plans: state.plans.map((plan) => plan.id !== verified.plan.id ? plan : { ...verified.plan, repairRevisions: [...(plan.repairRevisions ?? []), ...verified.revisionDrafts.map((draft) => ({ id: crypto.randomUUID(), createdAt: new Date().toISOString(), slotId: draft.slotId, kind: draft.kind, ...(perishableRisk && { perishableDisposition: 'acknowledged-preservation-risk' as const }), ...(verified.choice.leftoverLotId && { leftoverLotId: verified.choice.leftoverLotId }), ...(verified.choice.adaptationId && { adaptationId: verified.choice.adaptationId }), ...(draft.kind === 'recovery' && verified.choice.kind !== 'recovery' && { reason: 'replan' }), ...(verified.choice.reason && { reason: verified.choice.reason }), ...(verified.choice.takeoutContext && { takeoutContext: verified.choice.takeoutContext }) }))] }), leftoverLots: verified.leftoverLots }
-    if (!appStateV3Schema.safeParse(next).success) { setMessage('Changes are invalid and were not applied.'); return }
+    const next: AppStateV4 = { ...state, recipes: failedLeftover?.multiplier ? state.recipes.map((recipe) => recipe.id === sourceRecipeId ? { ...recipe, leftoverQuantityMultiplier: failedLeftover.multiplier } : recipe) as AppStateV4['recipes'] : state.recipes, meals: failedLeftover?.remove ? state.meals.map((meal) => meal.id === repairPlan.slots.find((slot) => slot.id === failedLeftover.sourceSlotId)?.mealId ? { ...meal, plannedLeftoverDinner: undefined } : meal) : state.meals, plans: state.plans.map((plan) => plan.id !== verified.plan.id ? plan : { ...verified.plan, repairRevisions: [...(plan.repairRevisions ?? []), ...verified.revisionDrafts.map((draft) => ({ id: crypto.randomUUID(), createdAt: new Date().toISOString(), slotId: draft.slotId, kind: draft.kind, ...(perishableRisk && { perishableDisposition: 'acknowledged-preservation-risk' as const }), ...(verified.choice.leftoverLotId && { leftoverLotId: verified.choice.leftoverLotId }), ...(verified.choice.adaptationId && { adaptationId: verified.choice.adaptationId }), ...(draft.kind === 'recovery' && verified.choice.kind !== 'recovery' && { reason: 'replan' }), ...(verified.choice.reason && { reason: verified.choice.reason }), ...(verified.choice.takeoutContext && { takeoutContext: verified.choice.takeoutContext }) }))] }), leftoverLots: verified.leftoverLots }
+    if (!appStateV4Schema.safeParse(next).success) { setMessage('Changes are invalid and were not applied.'); return }
     commit(next, false)
     const nextFailedLeftover = unresolvedFailedLeftovers(next)[0]
     setRepairPreview(undefined); setFailedLeftover(nextFailedLeftover && { sourceSlotId: nextFailedLeftover.sourceSlotId }); setRepairPlanId(nextFailedLeftover?.planId ?? ''); setRepairSlotId(nextFailedLeftover?.dependentSlotId); setRepairOpen(Boolean(nextFailedLeftover)); setReviewNeeded((notices) => { const next = new Set(notices); verified.changedSlotIds.forEach((slotId) => next.delete(`${repairPlan.id}:${slotId}`)); return next }); setMessage(nextFailedLeftover ? 'Another failed leftover dinner needs repair.' : 'Plan repair confirmed.')
@@ -418,10 +426,10 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
   }
   const confirmShopping = () => {
     if (!shoppingPlan || shoppingPlan.shopping || !groceries || !window.confirm('Record shopping completion?')) return
-    const next: AppStateV3 = { ...state, plans: state.plans.map((plan) => plan.id !== shoppingPlan.id ? plan : { ...plan, shopping: { confirmedAt: new Date().toISOString(), partial: groceries.incompleteMeals.length > 0, skippedIncompleteMealIds: [...skippedIncompleteMeals], items: groceries.items.map((item) => ({ id: item.id, label: item.label, sourceLines: item.sourceLines, sourceSlotIds: item.sourceSlotIds, mealIds: item.mealIds, perishable: perishableItems.has(item.id), availability: unavailableItems.has(item.id) ? 'unavailable' : skippedItems.has(item.id) ? 'skipped' : 'available' })) } }) }
+    const next: AppStateV4 = { ...state, plans: state.plans.map((plan) => plan.id !== shoppingPlan.id ? plan : { ...plan, shopping: { confirmedAt: new Date().toISOString(), partial: groceries.incompleteMeals.length > 0, skippedIncompleteMealIds: [...skippedIncompleteMeals], items: groceries.items.map((item) => ({ id: item.id, label: item.label, sourceLines: item.sourceLines, sourceSlotIds: item.sourceSlotIds, mealIds: item.mealIds, perishable: perishableItems.has(item.id), availability: unavailableItems.has(item.id) ? 'unavailable' : skippedItems.has(item.id) ? 'skipped' : 'available' })) } }) }
     const confirmed = next.plans.find((plan) => plan.id === shoppingPlan.id)!
     const targets = [...new Set(confirmed.shopping!.items.flatMap((item) => unavailableShoppingTargets(next, confirmed.id, item)))]
-    if (!appStateV3Schema.safeParse(next).success) { setMessage('Changes are invalid and were not applied.'); return }
+    if (!appStateV4Schema.safeParse(next).success) { setMessage('Changes are invalid and were not applied.'); return }
     commit(next, false)
     setReviewNeeded((notices) => new Set([...notices, ...targets.map((slotId) => `${confirmed.id}:${slotId}`)]))
     if (targets.length === 1) { setRepairPlanId(confirmed.id); setRepairSlotId(targets[0]); setRepairOpen(true); setMessage('Unavailable ingredients need a confirmed repair.') }
@@ -451,8 +459,9 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
         <form className="actions" onSubmit={(event) => { event.preventDefault(); addException() }}>
           <label>Exception date<input type="date" value={exceptionDate} onChange={(event) => setExceptionDate(event.target.value)} /></label>
           <label>Exception note<input maxLength={500} value={exceptionNote} onChange={(event) => setExceptionNote(event.target.value)} /></label>
-          <label><input aria-label="Constrained night" type="checkbox" checked={exceptionConstrained} onChange={(event) => setExceptionConstrained(event.target.checked)} /> Constrained night</label>
-          <button disabled={state.household.scheduleExceptions.length >= 100}>Add exception</button>
+          <label><input aria-label="Constrained night" type="checkbox" checked={exceptionConstrained} onChange={(event) => { setExceptionConstrained(event.target.checked); if (event.target.checked) setExceptionHandsOff(false) }} /> Quick-cook night (30 minutes hands-on)</label>
+          <label><input aria-label="Hands-off night" type="checkbox" checked={exceptionHandsOff} onChange={(event) => { setExceptionHandsOff(event.target.checked); if (event.target.checked) setExceptionConstrained(false) }} /> Hands-off night (planned leftovers or your marked slow-cooker recipe)</label>
+          <button disabled={state.household.scheduleExceptions.length >= 100 && !state.household.scheduleExceptions.some((item) => item.date === exceptionDate)}>Add exception</button>
         </form>
         {state.household.scheduleExceptions.length > 0 && <ul>{state.household.scheduleExceptions.map((item) => <li key={item.id}>{item.date}{item.note && `: ${item.note}`}</li>)}</ul>}
       </section>
@@ -533,7 +542,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
               <label><input aria-label={`Active ${meal.name}`} type="checkbox" checked={meal.active} onChange={(event) => update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, active: event.target.checked } : currentMeal) }))} /> Active</label>
               <label><input aria-label={`Plan one leftover dinner for ${meal.name}`} type="checkbox" checked={meal.plannedLeftoverDinner === true} onChange={(event) => update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, plannedLeftoverDinner: event.target.checked || undefined } : currentMeal) }))} /> Plan one leftover dinner</label>
               <label>Safety review for {meal.name}<select value={meal.safetyReview ?? 'unknown'} onChange={(event) => update((current) => ({ ...current, meals: current.meals.map((currentMeal) => currentMeal.id === meal.id ? { ...currentMeal, safetyReview: event.target.value as 'unknown' | 'approved' | 'rejected' } : currentMeal) }))}><option value="unknown">Unknown</option><option value="approved">Compatibility confirmed</option><option value="rejected">Not compatible</option></select></label>
-              {recipes.map((recipe) => <div key={recipe.id}><p>Recipe: {recipe.title}</p>{recipe.ingredients?.length ? <section aria-label={`Ingredients for ${recipe.title}`}><ul>{recipe.ingredients.map((ingredient, index) => <li key={index}>{ingredient}</li>)}</ul></section> : null}</div>)}
+              {recipes.map((recipe) => <div key={recipe.id}><p>Recipe: {recipe.title}</p><label><input aria-label={`Hands-off slow cooker ${recipe.title}`} type="checkbox" checked={recipe.handsOffSlowCooker === true} onChange={(event) => update((current) => ({ ...current, recipes: current.recipes.map((item) => item.id === recipe.id ? { ...item, handsOffSlowCooker: event.target.checked || undefined } : item) }))} /> I can start this slow-cooker recipe before the hands-off window</label>{recipe.ingredients?.length ? <section aria-label={`Ingredients for ${recipe.title}`}><ul>{recipe.ingredients.map((ingredient, index) => <li key={index}>{ingredient}</li>)}</ul></section> : null}</div>)}
               <p>{recipes.length === 0 ? 'No linked recipe. Grocery ingredients are incomplete.' : `${recipes.length} linked recipe${recipes.length === 1 ? '' : 's'}. ${recipes.some((recipe) => !recipe.ingredients?.length) ? 'Grocery ingredients are incomplete.' : 'Grocery ingredients are available.'}`}</p>
               <p>{eligibility.eligible ? 'Eligible to plan.' : eligibility.reason}</p>
               {state.household.hardRestrictions.length > 0 && <p className="hint">Compatibility confirmation is your review; this app does not certify allergy safety.</p>}

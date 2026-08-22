@@ -1424,4 +1424,36 @@ describe('cooking outcomes', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Correct feedback' }))
     expect(screen.getByRole('heading', { name: 'Dinner feedback' })).toBeInTheDocument()
   })
+
+  it('lets the household mark a hands-off night and selected slow-cooker recipe before previewing', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'slow', name: 'Slow stew', active: true, safetyReview: 'approved', recipeIds: ['slow-r'] }, { id: 'other', name: 'Other dinner', active: true, safetyReview: 'approved' })
+    state.recipes.push({ id: 'slow-r', title: 'Slow stew', mealId: 'slow' })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.click(screen.getByLabelText('Hands-off slow cooker Slow stew'))
+    fireEvent.change(screen.getByLabelText('Exception date'), { target: { value: '2026-08-17' } })
+    fireEvent.click(screen.getByLabelText('Hands-off night'))
+    fireEvent.click(screen.getByRole('button', { name: 'Add exception' }))
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+
+    expect(screen.getByText(/Fits this hands-off night with the selected slow-cooker recipe/)).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').household.scheduleExceptions).toEqual([expect.objectContaining({ date: '2026-08-17', handsOff: true })])
+  })
+
+  it('canonically replaces duplicate date exceptions at the cap with the latest note', () => {
+    const state = createEmptyAppState()
+    state.household.scheduleExceptions.push(...Array.from({ length: 98 }, (_, index) => ({ id: `filler-${index}`, date: '2026-09-01', note: 'filler' })), { id: 'first', date: '2026-08-17', note: 'first note', constrained: true }, { id: 'latest', date: '2026-08-17', note: 'latest note', constrained: true })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Exception date'), { target: { value: '2026-08-17' } })
+    fireEvent.click(screen.getByLabelText('Hands-off night'))
+    fireEvent.click(screen.getByRole('button', { name: 'Add exception' }))
+
+    const exceptions = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').household.scheduleExceptions.filter((item: { date: string }) => item.date === '2026-08-17')
+    expect(exceptions).toEqual([expect.objectContaining({ note: 'latest note', handsOff: true })])
+  })
 })

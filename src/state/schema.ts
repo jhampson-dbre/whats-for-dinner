@@ -16,6 +16,7 @@ const minutes = z.number().int().min(0).max(10_080)
 const dinerSchema = z.object({ id, name: shortText, active: z.boolean() }).strict()
 const restrictionSchema = z.object({ id, label: shortText, dinerId: id.optional() }).strict()
 const scheduleExceptionSchema = z.object({ id, date, note: text.optional(), constrained: z.boolean().optional() }).strict()
+const v4ScheduleExceptionSchema = scheduleExceptionSchema.extend({ handsOff: z.literal(true).optional() })
 const adaptationSchema = z.object({ id, name: shortText, mealId: id.optional(), recipeId: id.optional(), dinerId: id.optional(), issue: text.optional(), solvesIssue: z.literal(true).optional(), coordinatedCooking: z.literal(true).optional(), noSecondEntree: z.literal(true).optional(), noUnplannedProtein: z.literal(true).optional(), noSeparateTimeline: z.literal(true).optional(), noExtraEffort: z.literal(true).optional() }).strict()
 
 const mealSchema = z.object({
@@ -29,6 +30,7 @@ const recipeSchema = z.object({
   servings: z.number().int().positive().max(100).optional(), ingredients: importedList.optional(), instructions: importedList.optional(), preparationNotes: text.optional(),
 }).strict()
 const v3RecipeSchema = recipeSchema.extend({ leftoverQuantityMultiplier: z.union([z.literal(1.5), z.literal(2)]).optional() })
+const v4RecipeSchema = v3RecipeSchema.extend({ handsOffSlowCooker: z.literal(true).optional() })
 const planSlotSchema = z.object({
   id, date, mealId: id.optional(), recipeId: id.optional(), leftoverLotIds: z.array(id).max(50).optional(), leftoverDependencyIds: z.array(id).max(50).optional(), leftoverFromSlotId: id.optional(),
   score: z.number().min(0).max(100).optional(), confidence: z.enum(['Estimated', 'Learning', 'Established']).optional(), scoreReasons: z.array(text).max(20).optional(),
@@ -64,9 +66,9 @@ function duplicateIds(ctx: z.RefinementCtx, values: { id: string; path: (string 
   })
 }
 
-const appStateSchema = (schemaVersion: 1 | 2 | 3, recipe = recipeSchema, plan = planSchema, outcome = outcomeSchema) => z.object({
+const appStateSchema = (schemaVersion: 1 | 2 | 3 | 4, recipe = recipeSchema, plan = planSchema, outcome = outcomeSchema, scheduleException = scheduleExceptionSchema) => z.object({
   schemaVersion: z.literal(schemaVersion),
-  household: z.object({ diners: z.array(dinerSchema).max(20), hardRestrictions: z.array(restrictionSchema).max(50), scheduleExceptions: z.array(scheduleExceptionSchema).max(100) }).strict(),
+  household: z.object({ diners: z.array(dinerSchema).max(20), hardRestrictions: z.array(restrictionSchema).max(50), scheduleExceptions: z.array(scheduleException).max(100) }).strict(),
   meals: z.array(mealSchema).max(500), recipes: z.array(recipe).max(1_000), plans: z.array(plan).max(100), leftoverLots: z.array(leftoverLotSchema).max(500), outcomes: z.array(outcome).max(2_000),
 }).strict().superRefine((state, ctx) => {
   duplicateIds(ctx, state.household.diners.map((value, index) => ({ id: value.id, path: ['household', 'diners', index] })))
@@ -115,7 +117,7 @@ const appStateSchema = (schemaVersion: 1 | 2 | 3, recipe = recipeSchema, plan = 
     if (slot.recipeId && slot.mealId) requireReference(state.recipes.some((recipe) => recipe.id === slot.recipeId && (recipe.mealId === slot.mealId || state.meals.some((meal) => meal.id === slot.mealId && meal.recipeIds?.includes(recipe.id)))), ['plans', planIndex, 'slots', slotIndex, 'recipeId'], 'recipe associated with slot meal')
     if (slot.leftoverFromSlotId) requireReference(plan.slots.slice(0, slotIndex).some((value) => value.id === slot.leftoverFromSlotId), ['plans', planIndex, 'slots', slotIndex, 'leftoverFromSlotId'], 'earlier plan slot')
     slot.expectedDinerIds?.forEach((ref, refIndex) => requireReference(diners.has(ref), ['plans', planIndex, 'slots', slotIndex, 'expectedDinerIds', refIndex], 'diner'))
-    if (slot.dinnerReadyAt && !slot.cookingStartedAt && !slot.leftoverFromSlotId && !(schemaVersion === 3 && (slot.leftoverLotIds?.length || !slot.mealId))) ctx.addIssue({ code: 'custom', path: ['plans', planIndex, 'slots', slotIndex, 'dinnerReadyAt'], message: 'Dinner ready requires cooking start.' })
+    if (slot.dinnerReadyAt && !slot.cookingStartedAt && !slot.leftoverFromSlotId && !(schemaVersion >= 3 && (slot.leftoverLotIds?.length || !slot.mealId))) ctx.addIssue({ code: 'custom', path: ['plans', planIndex, 'slots', slotIndex, 'dinnerReadyAt'], message: 'Dinner ready requires cooking start.' })
     if (slot.cookingStartedAt && slot.dinnerReadyAt && Date.parse(slot.dinnerReadyAt) < Date.parse(slot.cookingStartedAt)) ctx.addIssue({ code: 'custom', path: ['plans', planIndex, 'slots', slotIndex, 'dinnerReadyAt'], message: 'Dinner ready cannot precede cooking start.' })
     slot.leftoverLotIds?.forEach((ref, refIndex) => requireReference(leftovers.has(ref), ['plans', planIndex, 'slots', slotIndex, 'leftoverLotIds', refIndex], 'leftover lot'))
     slot.leftoverDependencyIds?.forEach((ref, refIndex) => requireReference(leftovers.has(ref), ['plans', planIndex, 'slots', slotIndex, 'leftoverDependencyIds', refIndex], 'leftover lot'))
@@ -172,3 +174,5 @@ export const appStateV2Schema = appStateSchema(2)
 export type AppStateV2 = z.infer<typeof appStateV2Schema>
 export const appStateV3Schema = appStateSchema(3, v3RecipeSchema, v3PlanSchema, v3OutcomeSchema)
 export type AppStateV3 = z.infer<typeof appStateV3Schema>
+export const appStateV4Schema = appStateSchema(4, v4RecipeSchema, v3PlanSchema, v3OutcomeSchema, v4ScheduleExceptionSchema)
+export type AppStateV4 = Omit<AppStateV3, 'schemaVersion' | 'household' | 'recipes'> & { schemaVersion: 4; household: Omit<AppStateV3['household'], 'scheduleExceptions'> & { scheduleExceptions: Array<AppStateV3['household']['scheduleExceptions'][number] & { handsOff?: true }> }; recipes: Array<AppStateV3['recipes'][number] & { handsOffSlowCooker?: true }> }

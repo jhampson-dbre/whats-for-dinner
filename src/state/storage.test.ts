@@ -6,6 +6,7 @@ import {
   loadAppState,
   migrateV1ToV2,
   migrateV2ToV3,
+  migrateV3ToV4,
   saveAppState,
 } from './storage'
 
@@ -25,6 +26,21 @@ function storageWith(value: string | null = null): Storage {
 }
 
 describe('local app-state persistence', () => {
+  it('migrates V3 to V4 without inventing hands-off markers', () => {
+    const v3 = { ...createEmptyAppState(), schemaVersion: 3 as const }
+    v3.household.scheduleExceptions.push({ id: 'quick', date: '2026-08-17', constrained: true })
+    v3.recipes.push({ id: 'recipe', title: 'Soup' })
+
+    expect(migrateV3ToV4(v3)).toEqual({ ...v3, schemaVersion: 4 })
+  })
+  it('loads V4 directly and keeps imported recipes unmarked', () => {
+    const state = createEmptyAppState()
+    state.recipes.push({ id: 'recipe', title: 'Soup' })
+    const raw = JSON.stringify(state)
+
+    expect(loadAppState(storageWith(raw))).toEqual({ kind: 'ready', state })
+    expect(importAppState(raw).recipes[0].handsOffSlowCooker).toBeUndefined()
+  })
   it('migrates V2 directly to V3, preserving legacy fields and deriving leftover servings', () => {
     const v2 = { ...createEmptyAppState(), schemaVersion: 2 as const }
     v2.meals.push({ id: 'meal-1', name: 'Soup', active: true })
@@ -85,18 +101,18 @@ describe('local app-state persistence', () => {
     const raw = JSON.stringify(v1)
     const storage = storageWith(raw)
 
-    expect(loadAppState(storage)).toEqual({ kind: 'ready', state: migrateV2ToV3(migrateV1ToV2(v1)) })
-    expect(JSON.parse(storage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toEqual(migrateV2ToV3(migrateV1ToV2(v1)))
-    expect(loadAppState(storage)).toEqual({ kind: 'ready', state: migrateV2ToV3(migrateV1ToV2(v1)) })
+    expect(loadAppState(storage)).toEqual({ kind: 'ready', state: migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(v1))) })
+    expect(JSON.parse(storage.getItem(APP_STATE_STORAGE_KEY) ?? '')).toEqual(migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(v1))))
+    expect(loadAppState(storage)).toEqual({ kind: 'ready', state: migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(v1))) })
 
     const failing = storageWith(raw)
     failing.setItem = () => { throw new Error('quota exceeded') }
-    expect(loadAppState(failing)).toEqual({ kind: 'ready', state: migrateV2ToV3(migrateV1ToV2(v1)), unsaved: true })
+    expect(loadAppState(failing)).toEqual({ kind: 'ready', state: migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(v1))), unsaved: true })
     expect(failing.getItem(APP_STATE_STORAGE_KEY)).toBe(raw)
   })
 
   it('keeps future versions in unsupported recovery', () => {
-    const raw = JSON.stringify({ schemaVersion: 4 })
+    const raw = JSON.stringify({ schemaVersion: 5 })
     expect(loadAppState(storageWith(raw))).toEqual({ kind: 'recovery', raw, reason: 'unsupported-version' })
   })
 

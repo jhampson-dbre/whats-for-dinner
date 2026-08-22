@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildWeeklyPlan, PLAN_WEIGHTS, replanRemainingWeek, type WeeklyPlan } from './weeklyPlan'
+import { buildWeeklyPlan, effectiveCapacity, PLAN_WEIGHTS, replanRemainingWeek, type WeeklyPlan } from './weeklyPlan'
 
 const base = { household: { diners: [], hardRestrictions: [], scheduleExceptions: [] }, recipes: [], plans: [], leftoverLots: [], outcomes: [] }
 const meal = (id: string, extra = {}) => ({ id, name: id, active: true, safetyReview: 'approved' as const, ...extra })
@@ -11,6 +11,23 @@ const plan = (preview: WeeklyPlan) => {
 const cookingIds = (preview: ReturnType<typeof plan>) => preview.slots.filter((slot) => slot.leftoverFrom === undefined).map((slot) => slot.mealId)
 
 describe('weekly plan', () => {
+  it('gives a later hands-off record precedence over an earlier constrained record', () => {
+    expect(effectiveCapacity({ ...base, meals: [], household: { ...base.household, scheduleExceptions: [{ date: '2026-08-17', constrained: true }, { date: '2026-08-17', handsOff: true }] } }, '2026-08-17')).toBe('hands-off')
+  })
+  it('uses a reserved leftover before a marked slow-cooker recipe on hands-off dates', () => {
+    const state = { ...base, household: { ...base.household, scheduleExceptions: [{ date: '2026-08-18', handsOff: true }, { date: '2026-08-20', handsOff: true }] }, meals: [meal('leftovers', { plannedLeftoverDinner: true }), meal('slow')], recipes: [{ id: 'leftovers-r', mealId: 'leftovers' }, { id: 'slow-r', mealId: 'slow', handsOffSlowCooker: true }] }
+    const preview = plan(buildWeeklyPlan(state, '2026-08-17'))
+
+    expect(preview.slots[1]).toMatchObject({ kind: 'leftover', mealId: 'leftovers' })
+    expect(preview.slots[3]).toMatchObject({ kind: 'cook', mealId: 'slow', recipeId: 'slow-r' })
+  })
+
+  it('does not treat an unmarked recipe as hands-off capable during repairs', () => {
+    const state = { ...base, household: { ...base.household, scheduleExceptions: [{ date: '2026-08-17', handsOff: true }] }, meals: [meal('quick', { recipeIds: ['quick-r'] }), meal('slow', { recipeIds: ['slow-r'] })], recipes: [{ id: 'quick-r', prepMinutes: 10 }, { id: 'slow-r', handsOffSlowCooker: true }], plans: [{ id: 'plan', slots: [{ id: 'target', date: '2026-08-17', mealId: 'quick', recipeId: 'quick-r' }] }], leftoverLots: [] }
+
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'recovery', mealId: 'quick' } })).toMatchObject({ kind: 'invalid-target' })
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'recovery', mealId: 'slow' } })).toMatchObject({ kind: 'repair' })
+  })
   it('keeps the initial wrapper equivalent and reserves requested takeout dates', () => {
     const state = { ...base, meals: [meal('a'), meal('b')] }
     expect(buildWeeklyPlan(state, '2026-08-17')).toEqual(replanRemainingWeek(state, { kind: 'initial', startDate: '2026-08-17' }))
