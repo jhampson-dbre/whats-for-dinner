@@ -86,10 +86,12 @@ function currentReviewSlots(state: AppStateV4): Set<string> {
     const meal = state.meals.find((item) => item.id === slot.mealId)
     const recipe = state.recipes.find((item) => item.id === slot.recipeId) ?? state.recipes.find((item) => item.mealId === meal?.id) ?? state.recipes.find((item) => meal?.recipeIds?.includes(item.id))
     const associated = recipe ? recipe.mealId === meal?.id || meal?.recipeIds?.includes(recipe.id) : !meal?.recipeIds?.length && !state.recipes.some((item) => item.mealId === meal?.id)
+    const selectedRecipe = state.recipes.find((item) => item.id === slot.recipeId)
+    const selectedRecipeAssociated = selectedRecipe?.mealId === meal?.id || meal?.recipeIds?.includes(selectedRecipe?.id ?? '')
     const efforts = correctedOutcomes(state.outcomes).filter((item) => item.mealId === meal?.id && item.recipeId === recipe?.id && !(item as { leftoverServing?: true }).leftoverServing && item.activeEffortMinutes !== undefined).map((item) => item.activeEffortMinutes!)
     const effort = efforts.length ? efforts.reduce((total, value) => total + value, 0) / efforts.length : recipe?.prepMinutes
     const capacity = effectiveCapacity(state, slot.date)
-    if (!meal?.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible || (!leftoverConsumer(slot) && (!associated || recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? []) || (capacity === 'hands-off' ? recipe?.handsOffSlowCooker !== true : capacity === 'constrained' && (effort === undefined || effort > 30))))) affected.add(`${plan.id}:${slot.id}`)
+    if (!meal?.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible || (!leftoverConsumer(slot) && (!associated || recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? []) || (capacity === 'hands-off' ? !(selectedRecipe && selectedRecipeAssociated && selectedRecipe.handsOffSlowCooker) : capacity === 'constrained' && (effort === undefined || effort > 30))))) affected.add(`${plan.id}:${slot.id}`)
   }
   return affected
 }
@@ -463,7 +465,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
           <label><input aria-label="Hands-off night" type="checkbox" checked={exceptionHandsOff} onChange={(event) => { setExceptionHandsOff(event.target.checked); if (event.target.checked) setExceptionConstrained(false) }} /> Hands-off night (planned leftovers or your marked slow-cooker recipe)</label>
           <button disabled={state.household.scheduleExceptions.length >= 100 && !state.household.scheduleExceptions.some((item) => item.date === exceptionDate)}>Add exception</button>
         </form>
-        {state.household.scheduleExceptions.length > 0 && <ul>{state.household.scheduleExceptions.map((item) => <li key={item.id}>{item.date}{item.note && `: ${item.note}`}</li>)}</ul>}
+        {state.household.scheduleExceptions.length > 0 && <ul>{state.household.scheduleExceptions.map((item) => <li key={item.id}>{item.date}: {item.handsOff ? 'Hands-off' : item.constrained ? 'Quick-cook' : 'Normal'}{item.note && ` — ${item.note}`}</li>)}</ul>}
       </section>
       <section aria-labelledby="weekly-plan-heading">
         <h2 id="weekly-plan-heading">Weekly plan</h2>

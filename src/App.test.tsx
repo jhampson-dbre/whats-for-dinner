@@ -147,7 +147,7 @@ describe('household onboarding and meal library', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add exception' }))
 
     expect(screen.getByText('Peanuts — Ava')).toBeInTheDocument()
-    expect(screen.getByText('2026-08-20: Late practice')).toBeInTheDocument()
+    expect(screen.getByText('2026-08-20: Normal — Late practice')).toBeInTheDocument()
   })
 
   it('keeps a name-only meal ineligible with a restriction until compatibility is confirmed, and persists the choice', () => {
@@ -1455,5 +1455,50 @@ describe('cooking outcomes', () => {
 
     const exceptions = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').household.scheduleExceptions.filter((item: { date: string }) => item.date === '2026-08-17')
     expect(exceptions).toEqual([expect.objectContaining({ note: 'latest note', handsOff: true })])
+  })
+
+  it('shows persisted hands-off capacity after reload', () => {
+    const state = createEmptyAppState()
+    state.household.scheduleExceptions.push({ id: 'hands-off', date: '2026-08-17', handsOff: true })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    expect(screen.getByText('2026-08-17: Hands-off')).toBeInTheDocument()
+  })
+
+  it('flags a hands-off meal-only confirmed slot for review even when a linked recipe is marked', () => {
+    const state = createEmptyAppState()
+    state.household.scheduleExceptions.push({ id: 'hands-off', date: '2026-08-17', handsOff: true })
+    state.meals.push({ id: 'slow', name: 'Slow stew', active: true, safetyReview: 'approved', recipeIds: ['slow-r'] })
+    state.recipes.push({ id: 'slow-r', title: 'Slow stew', mealId: 'slow', handsOffSlowCooker: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'slow' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Slow stew' })).toBeDisabled()
+  })
+
+  it('flags a confirmed hands-off cooking slot when its selected recipe loses the marker', () => {
+    const state = createEmptyAppState()
+    state.household.scheduleExceptions.push({ id: 'hands-off', date: '2026-08-17', handsOff: true })
+    state.meals.push({ id: 'slow', name: 'Slow stew', active: true, safetyReview: 'approved', recipeIds: ['slow-r'] })
+    state.recipes.push({ id: 'slow-r', title: 'Slow stew', mealId: 'slow', handsOffSlowCooker: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'slow', recipeId: 'slow-r' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Hands-off slow cooker Slow stew' }))
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Slow stew' })).toBeDisabled()
+  })
+
+  it('persists a supplied note for a normal date', () => {
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Exception date'), { target: { value: '2026-08-17' } })
+    fireEvent.change(screen.getByLabelText('Exception note'), { target: { value: 'Family event' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add exception' }))
+
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').household.scheduleExceptions).toEqual([expect.objectContaining({ date: '2026-08-17', note: 'Family event' })])
   })
 })
