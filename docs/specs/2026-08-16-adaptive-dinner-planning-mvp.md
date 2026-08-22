@@ -127,20 +127,29 @@ date. An explicitly planned leftover slot is the only planned duplicate exceptio
 does not increment the cooking-selection count.
 
 Constrained-night fit measures hands-on effort rather than total elapsed cooking time.
-Use the average corrected `activeEffortMinutes` when household evidence exists;
-otherwise use recipe `prepMinutes`. Unknown hands-on effort remains unknown capacity
-on a constrained night. `cookMinutes` and observed start-to-ready elapsed time may
-inform explanations, but unattended duration alone never excludes a meal. This keeps
-slow-cooker and other make-ahead meals eligible when their known hands-on effort fits
-the initial 30-minute constrained-night threshold.
+Use the unrounded average of defined `activeEffortMinutes` from corrected outcomes when
+household evidence exists; otherwise use recipe `prepMinutes`. Unknown hands-on effort
+remains unknown capacity on a constrained night. `cookMinutes` and observed
+start-to-ready elapsed time may inform explanations, but never establish hard-fit
+eligibility. This keeps slow-cooker and other make-ahead meals eligible when their
+known hands-on effort fits the initial 30-minute constrained-night threshold.
 
 `plannedLeftoverDinner` remains the explicit assertion that one cooking occurrence
 produces one additional household dinner. The planner assigns that coverage to the
 earliest unfilled later constrained night in the same seven-day plan, even when an
 unconstrained dinner occurs between source and leftovers. When no later constrained
-night remains, it uses the earliest unfilled later night. Each coverage unit is
-consumed once, retains its link to the earlier source slot, never increments cooking
-usage, and is never inferred from recipe yield alone.
+night remains, it uses the earliest unfilled later night. A flagged meal cannot be
+selected as a cooking source when no later target can be reserved, and leftover-fit
+points are awarded only after reservation. Multiple sources reserve distinct targets.
+Each coverage unit is consumed once, retains its link to the earlier source slot,
+never increments cooking usage, and is never inferred from recipe yield alone.
+
+A linked leftover target is serving or reheating, not a second cooking occurrence. It
+does not expose **Start cooking**, may use **Dinner's ready** without a cooking-start
+timestamp, and never records active-effort or elapsed-cooking evidence. Acceptance and
+leftover outcome feedback remain available. Planned takeout is disabled for both a
+leftover source and its linked target so confirmation cannot silently break the
+coverage invariant.
 
 Planner preview output is discriminated:
 
