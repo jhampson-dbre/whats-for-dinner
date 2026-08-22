@@ -1,7 +1,7 @@
 # What's for Dinner? Adaptive Planning MVP
 
-Status: Architecture and delivery reviewed; approved for implementation
-Date: 2026-08-16
+Status: Pilot onboarding correction architecture-reviewed; senior review pending; implementation paused
+Date: 2026-08-21
 Tracker: EPIC-1
 
 ## Product outcome
@@ -103,10 +103,37 @@ The weights are implementation defaults, not a user-facing tuning system. Each
 recommendation retains plain-language reasons. Raw outcomes remain available so a
 later learning model can replace the initial scoring without discarding history.
 
-The planner may offer at most one unfamiliar meal per week. Its actions are **Use this
-meal**, **Make it work for us**, and **Not for us**. Taking no action uses a proven
-household fallback. The optimizer never adds takeout; the user may select it during
-planning.
+The planner may offer at most one explicitly unfamiliar meal per week. Its actions are
+**Use this meal**, **Make it work for us**, and **Not for us**. Taking no action uses
+an active, compatible familiar household fallback; prior accepted outcomes are not
+required. The optimizer never adds takeout; the user may select it during planning.
+
+`provisional: true` means that the household explicitly marked the meal **New to our
+household**. An absent or false value means familiar. Familiar, active, compatible
+meals are immediately eligible even without outcomes. Corrected accepted outcomes may
+make an explicitly unfamiliar meal familiar for selection without rewriting the
+persisted choice. Outcomes affect ranking, reasons, and confidence, not familiar-meal
+eligibility or fallback eligibility.
+
+For each cooking slot, first restrict selection to eligible meals with the lowest
+current-preview non-leftover cooking count. Score and stable ID break ties only inside
+that pool. With seven or more eligible cooking choices, the first seven cooking
+selections are distinct. With two through six choices, cooking counts differ by at
+most one and adjacent duplicates are avoided whenever another least-used meal fits the
+date. An explicitly planned leftover slot is the only planned duplicate exception and
+does not increment the cooking-selection count.
+
+Planner preview output is discriminated:
+
+- `plan` contains exactly seven slots.
+- `guidance` covers one viable familiar meal or unfamiliar meals without a familiar
+  fallback and gives an actionable next step.
+- `no-eligible` is reserved for candidates excluded by inactivity, incompatibility,
+  or date-capacity constraints that prevent a complete plan.
+
+Guidance and failed previews remain transient, cannot be confirmed, and never mutate
+persisted state. The planner must not manufacture seven copies of one meal or expose a
+partial result as a confirmable weekly plan.
 
 ### Shared-meal adaptations
 
@@ -226,14 +253,17 @@ yield to 1 KiB each; ingredients and instructions to 500 items, 2 KiB per item, 
 ZIP bytes, HTML, images, and normalized candidates remain transient. Zod validates
 normalized drafts before review. Malformed, unnamed, or duplicate-ID records are
 skipped with a visible count; fail when no valid candidates remain. Boundary failure
-clears transient results and leaves `AppStateV1` unchanged.
+clears transient results and leaves runtime state unchanged.
 
 Candidate review offers **Add as a new meal**, **Add as a version of an existing
-meal**, and **Save recipe only**, with contextual title suggestions. Only explicit
-confirmation dispatches normalized recipe and meal changes through the reducer. Never
-silently merge or overwrite an existing recipe. This is a fixture-specific local
-importer, not a generic ZIP or recipe-import framework; revisit share links only if
-users cannot obtain exports.
+meal**, and **Save recipe only**, with contextual title suggestions. **Add as a new
+meal** defaults to familiar; an unchecked-by-default **New to our household** opt-in
+sets `provisional: true`. Adding a recipe version preserves the target meal's
+familiarity while still requiring safety reconfirmation when the recipe or household
+restrictions make that necessary. Only explicit confirmation dispatches normalized
+recipe and meal changes through the reducer. Never silently merge or overwrite an
+existing recipe. This is a fixture-specific local importer, not a generic ZIP or
+recipe-import framework; revisit share links only if users cannot obtain exports.
 
 ## State and architecture
 
@@ -247,9 +277,11 @@ framework, database, auth, repository layer, or live AI dependency.
 
 Recipe images are not imported or persisted in the MVP.
 
-`AppStateV1` is the single persisted document:
+`AppStateV2` is the single runtime and persisted document. V2 retains the V1 document
+shape and reference refinements; the discriminator and familiarity semantics are the
+only schema-version changes:
 
-- `schemaVersion: 1` is the top-level discriminator.
+- `schemaVersion: 2` is the top-level discriminator.
 - IDs are stable opaque strings generated with the native `crypto.randomUUID()` API.
 - Calendar dates use `YYYY-MM-DD`, timestamps use UTC ISO 8601 strings, and durations
   use non-negative integer minutes.
@@ -276,30 +308,46 @@ eligible 30 minutes later. The next full page load after eligibility may open th
 prompt; dismissing it leaves the outcome available from the plan history rather than
 discarding it.
 
-The storage contract is:
+The storage and migration contract is:
 
-- The fixed key is `whats-for-dinner.app-state`.
-- A missing key initializes a new V1 document. A valid V1 document restores exactly.
-- Malformed data or an unsupported schema version is never overwritten during startup.
-  The app enters recovery where the user may download the untouched raw value or reset
-  it explicitly.
-- The complete validated document is written after committed reducer changes without
-  deleting the previous value first. A failed write keeps the in-memory state, leaves
-  the last stored value untouched, and visibly marks changes as unsaved.
-- Normal export downloads only a validated V1 document. Import validates before any
-  mutation and, after confirmation, replaces the whole document; it never merges.
-- V1 has no predecessor to migrate. Reject unsupported versions now and add a migration
-  only when a later schema version exists.
+- The fixed key remains `whats-for-dinner.app-state`; no second key, backup copy,
+  history table, cross-tab synchronization, or rollback protocol is added.
+- `migrateV1ToV2` accepts only a fully valid V1 document, changes the discriminator,
+  removes `provisional` from every meal, changes nothing else, and validates the V2
+  result. This is an intentional semantic mapping for documents produced by the pilot
+  UI, whose Recipe Keeper flow set `provisional: true` by default and offered no
+  explicit unfamiliar choice. It cannot preserve an externally authored V1 meaning
+  that the old schema did not distinguish.
+- A missing key initializes an empty V2 document. Valid V2 loads directly.
+- Valid V1 loads as migrated V2 and attempts one same-key write without deleting the
+  old value first. Success enters ready/saved state. Failure leaves the exact V1 raw
+  value stored, runs the migrated V2 in memory, and visibly enters ready/unsaved state.
+- Malformed V1- or V2-shaped data enters malformed recovery. Any other discriminator
+  enters unsupported-version recovery. Startup never overwrites the exact raw value in
+  either case.
+- Import accepts a fully valid V1 or V2 document. V1 is migrated before the existing
+  restriction-change safety reset and final V2 validation. Confirmation occurs before
+  whole-document replacement; imports never merge.
+- After import confirmation, a failed write leaves the prior stored raw value untouched,
+  keeps the imported V2 in memory as unsaved, and reports **Loaded but not saved
+  locally** rather than claiming the backup was imported successfully.
+- Normal export validates and emits only the current in-memory V2, including a valid
+  unsaved V2. V1 remains accepted only as migration input.
+- Recovery reset reloads only after a successful V2 write. A failed reset leaves
+  recovery visible and reports the error.
+- Later committed reducer changes continue to write the complete validated V2 without
+  deleting the previous value first. A failed write keeps memory, preserves the last
+  stored raw value, and visibly marks changes as unsaved.
 
 Keep candidate eligibility, scoring, plan construction, repair preview, grocery
 derivation, and learning summaries as pure domain functions. The storage module alone
 loads, validates, saves, exports, and imports application state.
 
-## Delivery plan
+## Original EPIC-1 delivery plan
 
 1. **TREK-1: App foundation and local persistence**
-   Create the application, `AppStateV1`, validation, local persistence, recovery, and
-   whole-document state export/import. Do not add migration machinery before V2 exists.
+   Create the application, initial `AppStateV1`, validation, local persistence,
+   recovery, and whole-document state export/import.
 
 2. **TREK-2: Household onboarding and meal library**
    Add minimal profiles, restrictions, household exceptions, active meal selection,
@@ -324,6 +372,26 @@ loads, validates, saves, exports, and imports application state.
 Each task depends on the preceding task. Trekker is the durable execution source of
 truth.
 
+## Pilot onboarding correction delivery plan
+
+Implementation remains paused until senior developer review accepts this dependency
+plan.
+
+1. **Persisted familiarity semantics**
+   Add `AppStateV2`, the bounded V1-to-V2 migration and storage/import/export failure
+   behavior above. Update Recipe Keeper's new-meal destination with the explicit
+   familiarity opt-in. Preserve target familiarity when adding a recipe version and
+   preserve all safety-review data during migration.
+
+2. **First-plan selection and guidance**
+   Depend on slice 1's V2 runtime contract. Add least-used-first cooking selection,
+   familiar fallback semantics, discriminated preview results, actionable guidance,
+   and recipe timing through either schema-supported meal association direction.
+
+Do not change the Recipe Keeper ZIP parser, infer dietary compatibility, add a second
+familiarity field, add dependencies, or introduce migration/history infrastructure
+beyond the single V1-to-V2 function.
+
 ## Verification
 
 Use focused TDD for every behavior slice. After each task, run:
@@ -335,20 +403,28 @@ npm run build
 ```
 
 Use pure fixtures for import parsing, scoring, exclusions, grocery merging, repairs,
-leftovers, and learning. Storage checks cover V1 load/save/reload, malformed and future
-version recovery without overwrite, whole-document import replacement, write failure,
-and cooking/feedback restoration after reload. Importer checks cover rejection before
+leftovers, and learning. Storage checks cover full-field V1-to-V2 migration, startup
+migration success and failure, exact old-raw preservation, initial unsaved state, retry
+on a later mutation, V2 reload, malformed V1/V2 recovery, future-version recovery,
+failed recovery reset, V1/V2 backup import, restriction safety reset, failed-import
+memory/disk divergence, and V2-only export from saved and unsaved state. Importer checks cover rejection before
 extraction for invalid signature, file/entry/name/path limits, missing or duplicate
 `recipes.html`, encrypted or unsupported compression, decoded size, malformed records,
 duplicate IDs, bounded output, and unchanged application state on failure. Planner
-checks cover unknown dietary safety remaining ineligible until explicit confirmation. Use Testing Library
+checks cover unknown dietary safety remaining ineligible until explicit confirmation;
+familiar meals with zero outcomes; unfamiliar fallback without an accepted outcome;
+7, 6, 2, and 1 viable-meal cases; strong scores not defeating rotation; adjacency;
+intentional leftovers; discriminated guidance/no-eligible results; and both supported
+recipe association directions. Import interaction coverage verifies familiar-by-default
+new meals, persisted unfamiliar opt-in, and version imports preserving target familiarity. Use Testing Library
 for the task's primary interaction flow. After the final task, add one browser smoke
 path for onboarding -> plan -> shop -> cook -> feedback. A broad end-to-end matrix is
-not required. Add migration fixtures only when a later schema version exists.
+not required.
 
 ## MVP acceptance signals
 
-- A household reaches a seven-day plan without entering a full recipe manually.
+- A household reaches a seven-day first plan without entering a full recipe manually
+  or recording prior dinner outcomes.
 - The plan includes intentional leftovers and reflects constrained nights.
 - Name-only meals remain plannable without creating fictitious groceries.
 - Recipe Keeper imports preserve meal/recipe separation.
