@@ -198,6 +198,11 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
   } else if (request.action.kind === 'swap') {
     const other = slots.find((item) => item.date === (request.action as Extract<RepairAction, { kind: 'swap' }>).otherDate)
     if (!other || other.dinnerReadyAt || target.leftoverFromSlotId || other.leftoverFromSlotId || plan.slots.some((slot) => slot.leftoverFromSlotId === other.id && !slot.dinnerReadyAt)) return { kind: 'invalid-target', nextStep: 'Choose another unfinished unlinked slot.' }
+    const targetMeal = state.meals.find((meal) => meal.id === target.mealId)
+    const otherMeal = state.meals.find((meal) => meal.id === other.mealId)
+    const targetRecipe = state.recipes.find((recipe) => recipe.id === target.recipeId) ?? (targetMeal && recipeFor(targetMeal, state.recipes))
+    const otherRecipe = state.recipes.find((recipe) => recipe.id === other.recipeId) ?? (otherMeal && recipeFor(otherMeal, state.recipes))
+    if (!validRecipe(otherMeal, otherRecipe, target.date) || !validRecipe(targetMeal, targetRecipe, other.date)) return { kind: 'invalid-target', nextStep: 'Both swapped meals must fit their dates.' }
     const original = { mealId: target.mealId, recipeId: target.recipeId }
     replace({ mealId: other.mealId, recipeId: other.recipeId }); Object.assign(other, original); changed.add(other.id)
   } else if (request.action.kind === 'replan') {
@@ -239,7 +244,6 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
     const original = repairState.plans.find((item) => item.id === candidatePlan.id)?.slots.find((item) => item.id === slot.id)
     if (!slot.dinnerReadyAt && original?.cookingStartedAt && (slot.mealId !== original.mealId || slot.recipeId !== original.recipeId)) delete slot.cookingStartedAt
   }
-  if (request.action.kind === 'swap' && !slots.filter((slot) => slot.id === target.id || slot.date === (request.action as Extract<RepairAction, { kind: 'swap' }>).otherDate).every((slot) => !slot.mealId || slot.leftoverFromSlotId || slot.leftoverLotIds?.length || fitsCookingCapacity(state, state.meals.find((meal) => meal.id === slot.mealId)!, state.recipes.find((recipe) => recipe.id === slot.recipeId) ?? recipeFor(state.meals.find((meal) => meal.id === slot.mealId)!, state.recipes), slot.date))) return { kind: 'invalid-target', nextStep: 'Both swapped meals must fit their dates.' }
   const changedSlotIds = repairedPlans.flatMap((candidatePlan) => candidatePlan.slots.filter((slot, index) => JSON.stringify(slot) !== JSON.stringify(repairState.plans.find((item) => item.id === candidatePlan.id)!.slots[index])).map((slot) => slot.id))
   const replannedSlotIds = new Set(closure.map((slot) => slot.id))
   const revisionDrafts = repairedPlans.flatMap((candidatePlan) => candidatePlan.slots.filter((slot, index) => JSON.stringify(slot) !== JSON.stringify(repairState.plans.find((item) => item.id === candidatePlan.id)!.slots[index])).map((slot) => ({ planId: candidatePlan.id, slotId: slot.id, kind: candidatePlan.id !== plan.id || (slot.id !== target.id && replannedSlotIds.has(slot.id)) ? 'replan' as const : request.action.kind })))

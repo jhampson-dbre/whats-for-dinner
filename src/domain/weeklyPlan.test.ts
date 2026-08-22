@@ -95,6 +95,11 @@ describe('weekly plan', () => {
     expect(preview).toMatchObject({ kind: 'repair', changedSlotIds: ['target', 'other'], revisionDrafts: [{ slotId: 'target', kind: 'swap' }, { slotId: 'other', kind: 'swap' }] })
   })
 
+  it('rejects a swap that moves an unconfirmed meal into the target date', () => {
+    const state = { ...base, household: { ...base.household, hardRestrictions: [{ id: 'peanuts' }] }, meals: [meal('safe'), meal('unknown', { safetyReview: 'unknown' })], plans: [{ id: 'plan', slots: [{ id: 'target', date: '2026-08-17', mealId: 'safe' }, { id: 'other', date: '2026-08-18', mealId: 'unknown' }] }], leftoverLots: [] }
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'swap', otherDate: '2026-08-18' } })).toMatchObject({ kind: 'invalid-target' })
+  })
+
   it('refills a source closure with an available recipe and leaves outside slots unchanged', () => {
     const state = { ...base, meals: [meal('blocked', { recipeIds: ['blocked-r'] }), meal('available', { recipeIds: ['available-r'] })], recipes: [{ id: 'blocked-r', ingredients: ['1 cup tomatoes'] }, { id: 'available-r', ingredients: ['1 cup beans'] }], plans: [{ id: 'plan', slots: [{ id: 'source', date: '2026-08-17', mealId: 'blocked' }, { id: 'dependent', date: '2026-08-18', mealId: 'blocked', leftoverFromSlotId: 'source' }, { id: 'outside', date: '2026-08-19', mealId: 'available' }], shopping: { items: [{ id: 'tomatoes', availability: 'unavailable', perishable: false, mealIds: ['blocked'], sourceLines: ['1 cup tomatoes'], sourceSlotIds: ['source'] }] } }], leftoverLots: [] }
     const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'replan' } })

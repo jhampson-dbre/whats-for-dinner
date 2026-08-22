@@ -202,7 +202,13 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     setSaveStatus(result.saved ? 'saved' : 'unsaved')
     setWeeklyPreview(undefined)
     setRepairPreview(undefined)
-    if (markReview) { const affected = affectedReviewSlots(state, next); if (affected.size) setReviewNeeded((notices) => new Set([...notices, ...affected])) }
+    const priorCurrent = currentReviewSlots(state)
+    const nextCurrent = currentReviewSlots(next)
+    const affected = markReview ? affectedReviewSlots(state, next) : new Set<string>()
+    setReviewNeeded((notices) => {
+      const stale = new Set([...notices].filter((notice) => priorCurrent.has(notice) && !nextCurrent.has(notice)))
+      return new Set([...notices].filter((notice) => !stale.has(notice)).concat([...affected].filter((notice) => !stale.has(notice))))
+    })
     dispatch({ type: 'replace', state: next })
     return result
   }

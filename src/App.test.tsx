@@ -164,6 +164,24 @@ describe('household onboarding and meal library', () => {
     expect(screen.queryByRole('button', { name: 'Remove restriction Peanuts' })).not.toBeInTheDocument()
   })
 
+  it('unblocks a plan immediately when its newly added diner restriction becomes inactive', () => {
+    const state = createEmptyAppState()
+    state.household.diners.push({ id: 'ava', name: 'Ava', active: true })
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'tacos' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Hard restriction'), { target: { value: 'Peanuts' } })
+    fireEvent.change(screen.getByLabelText('Applies to'), { target: { value: 'ava' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add restriction' }))
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Active Ava'))
+
+    expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Tacos' })).toBeEnabled()
+  })
+
   it('onboards a diner, a diner restriction, and a schedule exception', () => {
     render(<App />)
 
@@ -771,11 +789,11 @@ describe('shopping and repair', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Shopping done' }))
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].shopping).toMatchObject({ partial: true, skippedIncompleteMealIds: ['soup'], items: [{ id: 'tacos-slot:0', label: '1 cup tomatoes', sourceLines: ['1 cup tomatoes'], mealIds: ['tacos'], perishable: false, availability: 'unavailable' }] })
     openPlanRepair()
-    fireEvent.click(screen.getByRole('button', { name: 'Swap with Soup' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Replan with eligible meal' }))
     expect(screen.getByText(/Repair preview: Tacos becomes Soup/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[0].mealId).toBe('soup')
-    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[1].mealId).toBe('tacos')
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[1].mealId).toBe('soup')
   })
 
   it('uses the explicitly selected plan for shopping and invalidates a repair preview on local availability changes', () => {
@@ -1090,7 +1108,7 @@ describe('shopping and repair', () => {
     expect(screen.queryByRole('button', { name: 'Confirm repair' })).not.toBeInTheDocument()
   })
 
-  it('clears review notices for every slot changed by a confirmed repair', () => {
+  it('allows a valid swap after compatibility is reconfirmed', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' }, { id: 'soup', name: 'Soup', active: true, safetyReview: 'approved' })
     state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'tacos-slot', date: '2026-08-17', mealId: 'tacos' }, { id: 'soup-slot', date: '2026-08-18', mealId: 'soup' }] } as never)
@@ -1101,11 +1119,13 @@ describe('shopping and repair', () => {
     fireEvent.change(screen.getByLabelText('Hard restriction'), { target: { value: 'Peanuts' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add restriction' }))
     expect(screen.getAllByRole('button', { name: 'Review needed' })).toHaveLength(2)
+    fireEvent.change(screen.getByLabelText('Safety review for Tacos'), { target: { value: 'approved' } })
+    fireEvent.change(screen.getByLabelText('Safety review for Soup'), { target: { value: 'approved' } })
     openPlanRepair()
     fireEvent.click(screen.getByRole('button', { name: 'Swap with Soup' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
 
-    expect(screen.getAllByRole('button', { name: 'Review needed' })).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
   })
 
   it('keeps a repair preview, notices, storage, and rendered plan unchanged when repair confirmation fails V3 validation', () => {
@@ -1119,6 +1139,8 @@ describe('shopping and repair', () => {
     render(<App />)
     fireEvent.change(screen.getByLabelText('Hard restriction'), { target: { value: 'Peanuts' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add restriction' }))
+    fireEvent.change(screen.getByLabelText('Safety review for Tacos'), { target: { value: 'approved' } })
+    fireEvent.change(screen.getByLabelText('Safety review for Soup'), { target: { value: 'approved' } })
     const savedBeforeRepair = localStorage.getItem(APP_STATE_STORAGE_KEY)
     openPlanRepair()
     fireEvent.click(screen.getByRole('button', { name: 'Swap with Soup' }))
@@ -1128,7 +1150,7 @@ describe('shopping and repair', () => {
     expect(localStorage.getItem(APP_STATE_STORAGE_KEY)).toBe(savedBeforeRepair)
     expect(screen.getAllByText(/2026-08-17: Tacos/)).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Confirm repair' })).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: 'Review needed' })).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Changes are invalid and were not applied.')
     expect(screen.getByRole('status')).not.toHaveTextContent('Plan repair confirmed.')
   })
