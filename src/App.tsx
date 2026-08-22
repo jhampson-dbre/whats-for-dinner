@@ -177,6 +177,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
   const [repairOpen, setRepairOpen] = useState(Boolean(initialFailedLeftover))
   const [repairPreview, setRepairPreview] = useState<RepairPreview>()
   const [adaptationMealId, setAdaptationMealId] = useState('')
+  const [adaptationRecipeId, setAdaptationRecipeId] = useState('')
   const [adaptationDinerId, setAdaptationDinerId] = useState('')
   const [adaptationIssue, setAdaptationIssue] = useState('')
   const [adaptationName, setAdaptationName] = useState('')
@@ -401,9 +402,12 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
   }
   const saveAdaptation = () => {
     const result = adaptSharedMeal({ dinerId: adaptationDinerId, issue: adaptationIssue.trim(), name: adaptationName.trim(), solvesIssue: adaptationChecks.solvesIssue, coordinatedCooking: adaptationChecks.coordinatedCooking, secondEntree: !adaptationChecks.noSecondEntree, unplannedProtein: !adaptationChecks.noUnplannedProtein, separateTimeline: !adaptationChecks.noSeparateTimeline, extraEffort: !adaptationChecks.noExtraEffort })
-    if (!result.valid || !adaptationMealId || !adaptationName.trim()) { setMessage(result.reason ?? 'Choose a meal and adaptation name first.'); return }
-    update((current) => ({ ...current, meals: current.meals.map((meal) => meal.id !== adaptationMealId ? meal : { ...meal, adaptations: [...(meal.adaptations ?? []), { id: crypto.randomUUID(), name: adaptationName.trim(), dinerId: adaptationDinerId, issue: adaptationIssue.trim(), solvesIssue: true, coordinatedCooking: true, noSecondEntree: true, noUnplannedProtein: true, noSeparateTimeline: true, noExtraEffort: true }] }) }))
-    setAdaptationName(''); setAdaptationIssue(''); setMessage('Shared-meal adaptation saved.')
+    const meal = state.meals.find((item) => item.id === adaptationMealId)
+    const normalRecipeId = meal?.recipeIds?.map((id) => state.recipes.find((recipe) => recipe.id === id)?.id).find(Boolean) ?? state.recipes.find((recipe) => recipe.mealId === meal?.id)?.id
+    const recipe = state.recipes.find((item) => item.id === adaptationRecipeId)
+    if (!result.valid || !meal || !adaptationName.trim() || !recipe || recipe.id === normalRecipeId || !(recipe.mealId === meal.id || meal.recipeIds?.includes(recipe.id))) { setMessage(result.reason ?? 'Choose a meal, distinct linked recipe, and adaptation name first.'); return }
+    update((current) => ({ ...current, meals: current.meals.map((item) => item.id !== adaptationMealId ? item : { ...item, adaptations: [...(item.adaptations ?? []), { id: crypto.randomUUID(), name: adaptationName.trim(), recipeId: adaptationRecipeId, dinerId: adaptationDinerId, issue: adaptationIssue.trim(), solvesIssue: true, coordinatedCooking: true, noSecondEntree: true, noUnplannedProtein: true, noSeparateTimeline: true, noExtraEffort: true }] }) }))
+    setAdaptationName(''); setAdaptationIssue(''); setAdaptationRecipeId(''); setMessage('Shared-meal adaptation saved.')
   }
   const linkRecovery = (mealId: string, recoveryMealId: string) => {
     if (mealId === recoveryMealId || (state.meals.find((meal) => meal.id === mealId)?.recoveryMealIds?.length ?? 0) >= 50) return
@@ -539,7 +543,8 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
           <button disabled={state.meals.length >= 500}>Add meal</button>
         </form>
         {state.meals.length > 0 && state.household.diners.length > 0 && <form className="actions" onSubmit={(event) => { event.preventDefault(); saveAdaptation() }}>
-          <label>Adapt meal<select value={adaptationMealId} onChange={(event) => setAdaptationMealId(event.target.value)}><option value="">Choose a meal</option>{state.meals.map((meal) => <option key={meal.id} value={meal.id}>{meal.name}</option>)}</select></label>
+          <label>Adapt meal<select value={adaptationMealId} onChange={(event) => { setAdaptationMealId(event.target.value); setAdaptationRecipeId('') }}><option value="">Choose a meal</option>{state.meals.map((meal) => <option key={meal.id} value={meal.id}>{meal.name}</option>)}</select></label>
+          <label>Adaptation recipe<select value={adaptationRecipeId} onChange={(event) => setAdaptationRecipeId(event.target.value)}><option value="">Choose a distinct linked recipe</option>{state.recipes.filter((recipe) => { const meal = state.meals.find((item) => item.id === adaptationMealId); const normalRecipeId = meal?.recipeIds?.map((id) => state.recipes.find((item) => item.id === id)?.id).find(Boolean) ?? state.recipes.find((item) => item.mealId === meal?.id)?.id; return recipe.id !== normalRecipeId && (recipe.mealId === adaptationMealId || meal?.recipeIds?.includes(recipe.id)) }).map((recipe) => <option key={recipe.id} value={recipe.id}>{recipe.title}</option>)}</select></label>
           <label>Diner<select value={adaptationDinerId} onChange={(event) => setAdaptationDinerId(event.target.value)}><option value="">Choose a diner</option>{state.household.diners.map((diner) => <option key={diner.id} value={diner.id}>{diner.name}</option>)}</select></label>
           <label>Issue<input maxLength={500} value={adaptationIssue} onChange={(event) => setAdaptationIssue(event.target.value)} /></label>
           <label>Shared adaptation<input maxLength={160} value={adaptationName} onChange={(event) => setAdaptationName(event.target.value)} /></label><button>Add shared adaptation</button>

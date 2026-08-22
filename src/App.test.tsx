@@ -810,6 +810,50 @@ describe('shopping and repair', () => {
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').meals.find((meal: { id: string }) => meal.id === 'tacos').recoveryMealIds).toEqual(['soup'])
   })
 
+  it('saves a selected shared adaptation recipe and exposes it for repair', () => {
+    const state = createEmptyAppState()
+    state.household.diners.push({ id: 'ava', name: 'Ava', active: true })
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, recipeIds: ['tacos-normal', 'tacos-simple'] }, { id: 'soup', name: 'Soup', active: true })
+    state.recipes.push({ id: 'tacos-normal', title: 'Tacos', mealId: 'tacos' }, { id: 'tacos-simple', title: 'Simple tacos', mealId: 'tacos' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'tacos', recipeId: 'tacos-normal' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Adapt meal'), { target: { value: 'tacos' } })
+    fireEvent.change(screen.getByLabelText('Adaptation recipe'), { target: { value: 'tacos-simple' } })
+    fireEvent.change(screen.getByLabelText('Diner'), { target: { value: 'ava' } })
+    fireEvent.change(screen.getByLabelText('Issue'), { target: { value: 'Too spicy' } })
+    fireEvent.change(screen.getByLabelText('Shared adaptation'), { target: { value: 'Mild version' } })
+    ;['Solves the issue', 'One coordinated cooking session', 'No second entree', 'No unplanned non-staple protein', 'No separate timeline', 'No needless extra effort'].forEach((label) => fireEvent.click(screen.getByLabelText(label)))
+    fireEvent.click(screen.getByRole('button', { name: 'Add shared adaptation' }))
+
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').meals.find((meal: { id: string }) => meal.id === 'tacos').adaptations).toEqual([expect.objectContaining({ recipeId: 'tacos-simple' })])
+    openPlanRepair()
+    expect(screen.getByRole('button', { name: 'Use Mild version' })).toBeInTheDocument()
+  })
+
+  it('plans and confirms the selected adaptation recipe for an optional meal', () => {
+    const state = createEmptyAppState()
+    state.household.diners.push({ id: 'ava', name: 'Ava', active: true })
+    state.meals.push({ id: 'fallback', name: 'Fallback', active: true, safetyReview: 'approved' }, { id: 'other', name: 'Other', active: true, safetyReview: 'approved' }, { id: 'new', name: 'New', active: true, provisional: true, safetyReview: 'approved', recipeIds: ['new-normal', 'new-adapted'] })
+    state.recipes.push({ id: 'new-normal', title: 'New normal', mealId: 'new' }, { id: 'new-adapted', title: 'New adapted', mealId: 'new' })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Adapt meal'), { target: { value: 'new' } })
+    fireEvent.change(screen.getByLabelText('Adaptation recipe'), { target: { value: 'new-adapted' } })
+    fireEvent.change(screen.getByLabelText('Diner'), { target: { value: 'ava' } })
+    fireEvent.change(screen.getByLabelText('Issue'), { target: { value: 'Too spicy' } })
+    fireEvent.change(screen.getByLabelText('Shared adaptation'), { target: { value: 'Mild version' } })
+    ;['Solves the issue', 'One coordinated cooking session', 'No second entree', 'No unplanned non-staple protein', 'No separate timeline', 'No needless extra effort'].forEach((label) => fireEvent.click(screen.getByLabelText(label)))
+    fireEvent.click(screen.getByRole('button', { name: 'Add shared adaptation' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Make it work for us' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
+
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[0]).toMatchObject({ mealId: 'new', recipeId: 'new-adapted', scoreReasons: expect.arrayContaining(['Uses shared adaptation with New adapted.']) })
+  })
+
   it('does not add recovery links beyond the meal limit', () => {
     const state = createEmptyAppState()
     const recoveryMealIds = Array.from({ length: 50 }, (_, index) => `recovery-${index}`)

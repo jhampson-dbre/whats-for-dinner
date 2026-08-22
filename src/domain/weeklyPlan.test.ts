@@ -36,6 +36,15 @@ describe('weekly plan', () => {
     expect(preview.slots.filter((slot) => slot.leftoverFrom !== undefined).every((slot) => slot.date !== '2026-08-17' && slot.date !== '2026-08-19')).toBe(true)
   })
 
+  it('uses only a complete, distinct associated adaptation recipe for an optional meal', () => {
+    const state = { ...base, meals: [meal('fallback'), meal('other'), meal('new', { provisional: true, recipeIds: ['new-normal', 'new-adapted'], adaptations: [{ id: 'missing-guard', recipeId: 'new-adapted', solvesIssue: true }, { id: 'same-recipe', recipeId: 'new-normal', solvesIssue: true, coordinatedCooking: true, noSecondEntree: true, noUnplannedProtein: true, noSeparateTimeline: true, noExtraEffort: true }, { id: 'adapted', recipeId: 'new-adapted', solvesIssue: true, coordinatedCooking: true, noSecondEntree: true, noUnplannedProtein: true, noSeparateTimeline: true, noExtraEffort: true }] })], recipes: [{ id: 'new-normal', mealId: 'new', title: 'Normal' }, { id: 'new-adapted', mealId: 'new', title: 'Adapted' }] }
+
+    const preview = plan(buildWeeklyPlan(state, '2026-08-17', 'adapt'))
+
+    expect(preview.slots[0]).toMatchObject({ mealId: 'new', recipeId: 'new-adapted' })
+    expect(preview.slots[0].reasons).toContain('Uses shared adaptation with Adapted.')
+  })
+
   it('repairs only the selected unfinished slot and emits a revision draft', () => {
     const state = { ...base, meals: [meal('a'), meal('b')], plans: [{ id: 'plan', slots: [{ id: 'done', date: '2026-08-17', mealId: 'a', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }, { id: 'target', date: '2026-08-18', mealId: 'a' }, { id: 'outside', date: '2026-08-19', mealId: 'b' }] }], leftoverLots: [] }
     const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-18', action: { kind: 'takeout', takeoutContext: 'planned' } })
