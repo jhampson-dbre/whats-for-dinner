@@ -4,7 +4,7 @@ import { strToU8, zipSync } from 'fflate'
 import recipeFixture from './import/recipeKeeper.fixture.html?raw'
 import App from './App'
 import { classifyRecovery } from './domain/outcomes'
-import { APP_STATE_STORAGE_KEY, createEmptyAppState } from './state/storage'
+import { APP_STATE_STORAGE_KEY, createEmptyAppState, importAppState } from './state/storage'
 
 function backup(mealId: string) {
   const state = createEmptyAppState()
@@ -1271,6 +1271,96 @@ describe('Recipe Keeper import', () => {
 
     expect(screen.getByRole('status')).toHaveTextContent('Save recipe only or choose an existing meal; this title is too long for a new meal.')
     expect(container.querySelectorAll('.meal-list li')).toHaveLength(0)
+  })
+
+  it('keeps save-only recipes available for reassignment and marks affected plans for review', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const state = createEmptyAppState()
+    state.meals.push(
+      { id: 'old', name: 'Old meal', active: true, safetyReview: 'approved', recipeIds: ['saved-recipe'] },
+      { id: 'new', name: 'New meal', active: true, safetyReview: 'approved' },
+    )
+    state.recipes.push({ id: 'saved-recipe', title: 'Saved recipe', mealId: 'old', ingredients: ['1 cup beans'] })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'old', recipeId: 'saved-recipe' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    const view = render(<App />)
+
+    fireEvent.change(screen.getByLabelText('Meal association for Saved recipe'), { target: { value: 'new' } })
+    const reassigned = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    expect(reassigned).toMatchObject({
+      recipes: [expect.objectContaining({ id: 'saved-recipe', mealId: 'new' })],
+      meals: [expect.objectContaining({ id: 'old', safetyReview: 'unknown' }), expect.objectContaining({ id: 'new', recipeIds: ['saved-recipe'], safetyReview: 'unknown' })],
+    })
+    expect(reassigned.meals.find((meal: { id: string }) => meal.id === 'old').recipeIds ?? []).not.toContain('saved-recipe')
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking Old meal' })).toBeDisabled()
+    view.unmount(); render(<App />)
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Meal association for Saved recipe')).toHaveValue('new')
+    expect(screen.getByLabelText('Ingredients for Saved recipe')).toHaveTextContent('1 cup beans')
+
+    fireEvent.change(screen.getByLabelText('Meal association for Saved recipe'), { target: { value: '' } })
+    const unlinked = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    expect(unlinked.recipes[0]).not.toHaveProperty('mealId')
+    expect(unlinked.meals.find((meal: { id: string }) => meal.id === 'new').recipeIds ?? []).not.toContain('saved-recipe')
+  })
+
+  it('associates a reloaded save-only import with an existing meal', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'soup', name: 'Soup', active: true })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    const first = render(<App />)
+    const bytes = zipSync({ 'recipes.html': strToU8(recipeFixture) })
+    fireEvent.change(screen.getByLabelText('Recipe Keeper ZIP'), { target: { files: [{ arrayBuffer: () => Promise.resolve(bytes.buffer) }] } })
+    await screen.findByText(/Preview: Weeknight Soup/)
+    fireEvent.click(screen.getByLabelText('Save recipe only'))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }))
+    await screen.findByText('Recipe saved without a meal.')
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').recipes[0]).not.toHaveProperty('mealId')
+
+    first.unmount(); render(<App />)
+    fireEvent.change(screen.getByLabelText('Meal association for Weeknight Soup'), { target: { value: 'soup' } })
+    expect(screen.getByText('1 linked recipe. Grocery ingredients are available.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Ingredients for Weeknight Soup')).toBeInTheDocument()
+  })
+
+  it('preserves completed recipe attribution after reassignment', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'old', name: 'Old meal', active: true, recipeIds: ['recipe'] }, { id: 'new', name: 'New meal', active: true })
+    state.recipes.push({ id: 'recipe', title: 'Saved recipe', mealId: 'old' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'old', recipeId: 'recipe', cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T17:25:00.000Z' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    const view = render(<App />)
+
+    fireEvent.change(screen.getByLabelText('Meal association for Saved recipe'), { target: { value: 'new' } })
+    const persisted = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    expect(persisted.recipes[0]).toMatchObject({ mealId: 'new' })
+    expect(persisted.plans[0].slots[0]).toMatchObject({ id: 'slot', mealId: 'old', recipeId: 'recipe', cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T17:25:00.000Z' })
+    expect(() => importAppState(JSON.stringify(persisted))).not.toThrow()
+    view.unmount(); render(<App />)
+    expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
+  })
+
+  it('repairs an unfinished reassigned recipe to a cookable associated meal', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'old', name: 'Old meal', active: false, recipeIds: ['recipe'] }, { id: 'new', name: 'New meal', active: true })
+    state.recipes.push({ id: 'recipe', title: 'Saved recipe', mealId: 'old' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'old', recipeId: 'recipe' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('Meal association for Saved recipe'), { target: { value: 'new' } })
+    expect(screen.getByRole('button', { name: 'Review needed' })).toBeInTheDocument()
+    openPlanRepair()
+    fireEvent.click(screen.getByRole('button', { name: 'Replan with eligible meal' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+    const persisted = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    expect(persisted.plans[0].slots[0]).toMatchObject({ mealId: 'new', recipeId: 'recipe' })
+    expect(() => importAppState(JSON.stringify(persisted))).not.toThrow()
+    expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start cooking New meal' })).toBeEnabled()
   })
 
   it('clears candidates and preserves saved state after an importer failure', async () => {

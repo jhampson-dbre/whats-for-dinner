@@ -343,6 +343,37 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
       setCandidates([]); setSelectedCandidate(''); setNewToHousehold(false); setMessage(error instanceof Error ? error.message : 'Could not read that Recipe Keeper ZIP.')
     }).finally(() => { event.target.value = '' })
   }
+  const setRecipeAssociation = (recipeId: string, mealId: string) => {
+    const recipe = state.recipes.find((item) => item.id === recipeId)
+    const target = mealId ? state.meals.find((item) => item.id === mealId) : undefined
+    if (!recipe || (mealId && !target)) return
+    if (target && target.recipeIds?.filter((id) => id !== recipeId).length === 50) { setMessage('That meal already has the maximum number of recipes.'); return }
+    update((current) => {
+      const currentRecipe = current.recipes.find((item) => item.id === recipeId)!
+      const affected = new Set(current.meals.filter((meal) => meal.recipeIds?.includes(recipeId)).map((meal) => meal.id))
+      if (currentRecipe.mealId) affected.add(currentRecipe.mealId)
+      if (mealId) affected.add(mealId)
+      return {
+        ...current,
+        recipes: current.recipes.map((item) => {
+          if (item.id !== recipeId) return item
+          const next = { ...item }
+          if (mealId) next.mealId = mealId
+          else delete next.mealId
+          return next
+        }),
+        meals: current.meals.map((meal) => {
+          if (!affected.has(meal.id)) return meal
+          const recipeIds = (meal.recipeIds ?? []).filter((id) => id !== recipeId)
+          if (meal.id === mealId) recipeIds.push(recipeId)
+          const next = { ...meal, safetyReview: 'unknown' as const }
+          if (recipeIds.length) next.recipeIds = recipeIds
+          else delete next.recipeIds
+          return next
+        }),
+      }
+    })
+  }
   const saveCandidate = () => {
     const candidate = chosenCandidate
     if (!candidate) return
@@ -575,6 +606,10 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
             </li>
           })}
         </ul>
+        {state.recipes.length > 0 && <section aria-label="Saved recipes"><h3>Saved recipes</h3><ul>{state.recipes.map((recipe) => {
+          const mealId = recipe.mealId ?? state.meals.find((meal) => meal.recipeIds?.includes(recipe.id))?.id ?? ''
+          return <li key={recipe.id}><label>Meal association for {recipe.title}<select value={mealId} onChange={(event) => setRecipeAssociation(recipe.id, event.target.value)}><option value="">Unlinked</option>{state.meals.map((meal) => <option key={meal.id} value={meal.id}>{meal.name}</option>)}</select></label></li>
+        })}</ul></section>}
       </section>
       <p className="actions">
         <button onClick={() => download('whats-for-dinner-backup.json', exportAppState(state))}>Export backup</button>

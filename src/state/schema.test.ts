@@ -130,14 +130,17 @@ describe('V1 state validation', () => {
     expect(() => importAppState(JSON.stringify(state))).toThrow('Unknown meal reference')
   })
 
-  it('rejects a recipe attached to a different meal and a repair slot from another plan', () => {
+  it('allows historical confirmed recipe drift but rejects unconfirmed drift and a repair slot from another plan', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'meal-1', name: 'Soup', active: true }, { id: 'meal-2', name: 'Pasta', active: true })
     state.recipes.push({ id: 'recipe-1', title: 'Soup', mealId: 'meal-2' })
-    state.plans.push({ id: 'plan-1', slots: [{ id: 'slot-1', date: '2026-08-17', mealId: 'meal-1', recipeId: 'recipe-1' }] } as never, { id: 'plan-2', slots: [{ id: 'slot-2', date: '2026-08-18', mealId: 'meal-2' }], repairRevisions: [{ id: 'repair-1', createdAt: '2026-08-16T00:00:00.000Z', slotId: 'slot-1', kind: 'takeout' }] } as never)
+    state.plans.push({ id: 'plan-1', confirmed: true, slots: [{ id: 'slot-1', date: '2026-08-17', mealId: 'meal-1', recipeId: 'recipe-1' }] } as never, { id: 'plan-2', slots: [{ id: 'slot-2', date: '2026-08-18', mealId: 'meal-2' }] } as never)
 
+    expect(() => importAppState(JSON.stringify(state))).not.toThrow()
+    state.plans[0].confirmed = false
     expect(() => importAppState(JSON.stringify(state))).toThrow('Unknown recipe associated with slot meal reference')
-    state.plans[0].slots[0].recipeId = undefined
+    state.plans[0].confirmed = true
+    state.plans[1].repairRevisions = [{ id: 'repair-1', createdAt: '2026-08-16T00:00:00.000Z', slotId: 'slot-1', kind: 'takeout' }]
     expect(() => importAppState(JSON.stringify(state))).toThrow('Unknown plan slot reference')
   })
 
