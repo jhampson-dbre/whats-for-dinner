@@ -28,6 +28,7 @@ const recipeSchema = z.object({
   category: importedText.optional(), prepMinutes: minutes.optional(), cookMinutes: minutes.optional(), yield: importedText.optional(),
   servings: z.number().int().positive().max(100).optional(), ingredients: importedList.optional(), instructions: importedList.optional(), preparationNotes: text.optional(),
 }).strict()
+const v3RecipeSchema = recipeSchema.extend({ leftoverQuantityMultiplier: z.union([z.literal(1.5), z.literal(2)]).optional() })
 const planSlotSchema = z.object({
   id, date, mealId: id.optional(), recipeId: id.optional(), leftoverLotIds: z.array(id).max(50).optional(), leftoverDependencyIds: z.array(id).max(50).optional(), leftoverFromSlotId: id.optional(),
   score: z.number().min(0).max(100).optional(), confidence: z.enum(['Estimated', 'Learning', 'Established']).optional(), scoreReasons: z.array(text).max(20).optional(),
@@ -36,10 +37,12 @@ const planSlotSchema = z.object({
 const planVariantSchema = z.object({ id, label: shortText, mealId: id.optional(), recipeId: id.optional() }).strict()
 const shoppingItemId = z.string().min(1).max(128)
 const shoppingSchema = z.object({ confirmedAt: timestamp, items: z.array(z.object({ id: shoppingItemId.optional(), label: importedText, sourceLines: importedList, mealIds: z.array(id).max(50), perishable: z.boolean(), availability: z.enum(['available', 'unavailable', 'skipped']) }).strict()).max(1_000), skippedIncompleteMealIds: z.array(id).max(500).default([]), partial: z.boolean().default(false) }).strict()
+const v3ShoppingSchema = z.object({ confirmedAt: timestamp, items: z.array(z.object({ id: shoppingItemId.optional(), label: importedText, sourceLines: importedList, sourceSlotIds: z.array(id).max(500).optional(), mealIds: z.array(id).max(50), perishable: z.boolean(), availability: z.enum(['available', 'unavailable', 'skipped']) }).strict()).max(1_000), skippedIncompleteMealIds: z.array(id).max(500).default([]), partial: z.boolean().default(false) }).strict()
 const repairRevisionSchema = z.object({ id, createdAt: timestamp, slotId: id.optional(), kind: z.enum(['simpler', 'swap', 'leftovers', 'recovery', 'takeout']).optional(), leftoverLotId: id.optional(), adaptationId: id.optional(), perishableDisposition: z.literal('acknowledged-preservation-risk').optional(), reason: text.optional(), takeoutContext: z.enum(['planned', 'unforeseeable-disruption', 'predictable-planning-or-acceptance-failure']).optional() }).strict()
 const planSchema = z.object({
   id, slots: z.array(planSlotSchema).max(31), confirmed: z.boolean().optional(), variants: z.array(planVariantSchema).max(100).optional(), scoreReasons: z.array(text).max(50).optional(), shopping: shoppingSchema.optional(), repairRevisions: z.array(repairRevisionSchema).max(100).optional(),
 }).strict()
+const v3PlanSchema = planSchema.extend({ shopping: v3ShoppingSchema.optional() })
 const leftoverLotSchema = z.object({
   id, sourcePlanId: id.optional(), sourceSlotId: id.optional(), sourceMealId: id.optional(), dinnerCoverage: z.enum(['none', 'some', 'one', 'more-than-one']).optional(), active: z.boolean().optional(),
 }).strict()
@@ -47,6 +50,7 @@ const personFeedbackSchema = z.object({ dinerId: id, acceptance: z.enum(['accept
 const outcomeSchema = z.object({
   id, planId: id.optional(), planSlotId: id.optional(), mealId: id.optional(), recipeId: id.optional(), correctionOfOutcomeId: id.optional(), recordedAt: timestamp.optional(), cookingStartedAt: timestamp.optional(), dinnerReadyAt: timestamp.optional(), activeEffortMinutes: minutes.optional(), availability: z.enum(['unknown', 'available', 'unavailable']).optional(), acceptance: z.enum(['unknown', 'accepted', 'rejected', 'neutral']).optional(), personFeedback: z.array(personFeedbackSchema).max(20).optional(), leftoverCoverage: z.enum(['none', 'some', 'one', 'more-than-one']).optional(), recoveryClassification: z.enum(['none', 'successful', 'unsuccessful']).optional(),
 }).strict()
+const v3OutcomeSchema = outcomeSchema.extend({ leftoverServing: z.literal(true).optional() })
 
 function referenceIssue(ctx: z.RefinementCtx, path: (string | number)[], label: string): void {
   ctx.addIssue({ code: 'custom', path, message: `Unknown ${label} reference.` })
@@ -60,10 +64,10 @@ function duplicateIds(ctx: z.RefinementCtx, values: { id: string; path: (string 
   })
 }
 
-const appStateSchema = (schemaVersion: 1 | 2) => z.object({
+const appStateSchema = (schemaVersion: 1 | 2 | 3, recipe = recipeSchema, plan = planSchema, outcome = outcomeSchema) => z.object({
   schemaVersion: z.literal(schemaVersion),
   household: z.object({ diners: z.array(dinerSchema).max(20), hardRestrictions: z.array(restrictionSchema).max(50), scheduleExceptions: z.array(scheduleExceptionSchema).max(100) }).strict(),
-  meals: z.array(mealSchema).max(500), recipes: z.array(recipeSchema).max(1_000), plans: z.array(planSchema).max(100), leftoverLots: z.array(leftoverLotSchema).max(500), outcomes: z.array(outcomeSchema).max(2_000),
+  meals: z.array(mealSchema).max(500), recipes: z.array(recipe).max(1_000), plans: z.array(plan).max(100), leftoverLots: z.array(leftoverLotSchema).max(500), outcomes: z.array(outcome).max(2_000),
 }).strict().superRefine((state, ctx) => {
   duplicateIds(ctx, state.household.diners.map((value, index) => ({ id: value.id, path: ['household', 'diners', index] })))
   duplicateIds(ctx, state.household.hardRestrictions.map((value, index) => ({ id: value.id, path: ['household', 'hardRestrictions', index] })))
@@ -116,7 +120,14 @@ const appStateSchema = (schemaVersion: 1 | 2) => z.object({
     slot.leftoverLotIds?.forEach((ref, refIndex) => requireReference(leftovers.has(ref), ['plans', planIndex, 'slots', slotIndex, 'leftoverLotIds', refIndex], 'leftover lot'))
     slot.leftoverDependencyIds?.forEach((ref, refIndex) => requireReference(leftovers.has(ref), ['plans', planIndex, 'slots', slotIndex, 'leftoverDependencyIds', refIndex], 'leftover lot'))
   }))
-  state.plans.forEach((plan, planIndex) => plan.shopping?.items.forEach((item, itemIndex) => item.mealIds.forEach((ref, refIndex) => requireReference(meals.has(ref), ['plans', planIndex, 'shopping', 'items', itemIndex, 'mealIds', refIndex], 'meal'))))
+  state.plans.forEach((plan, planIndex) => plan.shopping?.items.forEach((item, itemIndex) => {
+    item.mealIds.forEach((ref, refIndex) => requireReference(meals.has(ref), ['plans', planIndex, 'shopping', 'items', itemIndex, 'mealIds', refIndex], 'meal'))
+    const sourceSlotIds = (item as { sourceSlotIds?: string[] }).sourceSlotIds
+    if (sourceSlotIds) {
+      if (sourceSlotIds.length !== item.sourceLines.length) ctx.addIssue({ code: 'custom', path: ['plans', planIndex, 'shopping', 'items', itemIndex, 'sourceSlotIds'], message: 'Source slot IDs must align with source lines.' })
+      sourceSlotIds.forEach((ref, refIndex) => requireReference(plan.slots.some((slot) => slot.id === ref), ['plans', planIndex, 'shopping', 'items', itemIndex, 'sourceSlotIds', refIndex], 'plan-local slot'))
+    }
+  }))
   state.plans.forEach((plan, planIndex) => plan.shopping?.skippedIncompleteMealIds.forEach((ref, refIndex) => requireReference(meals.has(ref), ['plans', planIndex, 'shopping', 'skippedIncompleteMealIds', refIndex], 'meal')))
   state.plans.forEach((plan, planIndex) => plan.variants?.forEach((variant, variantIndex) => {
     if (variant.mealId) requireReference(meals.has(variant.mealId), ['plans', planIndex, 'variants', variantIndex, 'mealId'], 'meal')
@@ -158,3 +169,5 @@ export type AppStateV1 = z.infer<typeof appStateV1Schema>
 export const appStateV1Schema = appStateSchema(1)
 export const appStateV2Schema = appStateSchema(2)
 export type AppStateV2 = z.infer<typeof appStateV2Schema>
+export const appStateV3Schema = appStateSchema(3, v3RecipeSchema, v3PlanSchema, v3OutcomeSchema)
+export type AppStateV3 = z.infer<typeof appStateV3Schema>

@@ -16,4 +16,8 @@ describe('meal learning', () => {
       { id: 'three', mealId: 'tacos', acceptance: 'accepted' },
     ], 'tacos')).toMatchObject({ confidence: 'Learning', contradictory: true })
   })
+
+  it('retains leftover acceptance without treating it as cooking reliability evidence', () => {
+    expect(mealLearning([{ id: 'leftover', mealId: 'tacos', acceptance: 'accepted', leftoverServing: true } as never], 'tacos')).toMatchObject({ confidence: 'Estimated', relevant: 0 })
+  })
 })

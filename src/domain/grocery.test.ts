@@ -18,7 +18,7 @@ describe('buildGroceryList', () => {
 
     expect(list.complete).toBe(false)
     expect(list.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: '2 cups tomatoes', sourceLines: ['1 cup Tomatoes', '1 cups tomatoes'] }),
+      expect.objectContaining({ label: '2 cups tomatoes', sourceLines: ['1 cup Tomatoes', '1 cups tomatoes'], sourceSlotIds: ['soup-slot', 'toast-slot'] }),
       expect.objectContaining({ label: '3 tbsp olive oil', sourceLines: ['2 tbsp olive oil', '1 tablespoon olive oil'] }),
     ]))
     expect(list.items.some((item) => item.label.includes('old flour'))).toBe(false)

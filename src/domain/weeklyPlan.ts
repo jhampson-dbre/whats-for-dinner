@@ -1,15 +1,16 @@
 import { mealEligibility } from './mealEligibility'
 import { mealLearning } from './learning'
 import { correctedOutcomes, observedElapsedMinutes } from './outcomes'
+import { recipeUsesUnavailableIngredient } from './grocery'
 
 export const PLAN_WEIGHTS = { acceptanceHistory: 32, effortTimeFit: 18, scheduleContext: 12, sharedAdaptation: 12, variety: 12, leftoverFit: 8, confidence: 6 } as const
 
 type Meal = { id: string; name: string; active: boolean; provisional?: boolean; plannedLeftoverDinner?: boolean; safetyReview?: 'unknown' | 'approved' | 'rejected'; adaptations?: unknown[]; recipeIds?: string[] }
-type Recipe = { id: string; title?: string; mealId?: string; prepMinutes?: number; cookMinutes?: number }
+type Recipe = { id: string; title?: string; mealId?: string; prepMinutes?: number; cookMinutes?: number; ingredients?: string[] }
 type Outcome = { id?: string; mealId?: string; correctionOfOutcomeId?: string; acceptance?: 'accepted' | 'rejected' | 'neutral' | 'unknown'; cookingStartedAt?: string; dinnerReadyAt?: string; activeEffortMinutes?: number }
 type PlannerState = { household: { hardRestrictions: { id: string }[]; scheduleExceptions: { id?: string; date: string; constrained?: boolean }[] }; meals: Meal[]; recipes: Recipe[]; outcomes: Outcome[] }
 
-type PlanSlot = { date: string; mealId: string; recipeId?: string; leftoverFrom?: number; score: number; confidence: 'Estimated' | 'Learning' | 'Established'; reasons: string[] }
+type PlanSlot = { date: string; mealId: string; recipeId?: string; leftoverFrom?: number; kind?: 'cook' | 'leftover' | 'takeout'; score: number; confidence: 'Estimated' | 'Learning' | 'Established'; reasons: string[] }
 type OptionalAction = 'fallback' | 'use' | 'adapt' | 'reject'
 type Excluded = { mealId: string; reason: string }
 export type WeeklyPlan = { kind: 'plan'; slots: PlanSlot[]; excluded: Excluded[]; optional?: { mealId: string; fallbackMealId: string } }
@@ -23,10 +24,17 @@ function dateAfter(start: string, days: number): string {
 }
 
 function recipeFor(meal: Meal, recipes: Recipe[]): Recipe | undefined {
-  return recipes.filter((recipe) => recipe.mealId === meal.id || meal.recipeIds?.includes(recipe.id)).sort((a, b) => a.id.localeCompare(b.id))[0]
+  return meal.recipeIds?.map((id) => recipes.find((recipe) => recipe.id === id)).find((recipe): recipe is Recipe => recipe !== undefined) ?? recipes.find((recipe) => recipe.mealId === meal.id)
 }
 
-export function buildWeeklyPlan(state: PlannerState, startDate: string, optionalAction: OptionalAction = 'fallback'): WeeklyPlan {
+export type InitialRequest = { kind: 'initial'; startDate: string; optionalAction?: OptionalAction; takeoutDates?: string[] }
+export type ReplanState = PlannerState & { plans: Array<{ id: string; slots: Array<{ id: string; date: string; mealId?: string; recipeId?: string; dinnerReadyAt?: string; leftoverFromSlotId?: string; leftoverLotIds?: string[] }>; shopping?: { items: Array<{ id?: string; perishable: boolean; availability: string; mealIds: string[]; sourceLines: string[]; sourceSlotIds?: string[] }> } }>; leftoverLots: Array<{ id: string; active?: boolean; sourceMealId?: string }> }
+export type RepairAction = { kind: 'replan' } | { kind: 'simpler'; recipeId: string; adaptationId: string } | { kind: 'swap'; otherDate: string } | { kind: 'leftovers'; leftoverLotId: string } | { kind: 'recovery'; mealId: string } | { kind: 'takeout'; takeoutContext: 'planned' | 'unforeseeable-disruption' | 'predictable-planning-or-acceptance-failure' }
+export type RepairRequest = { kind: 'repair'; planId: string; targetDate: string; action: RepairAction }
+export type RepairCorePreview = { kind: 'repair'; plan: ReplanState['plans'][number]; leftoverLots: ReplanState['leftoverLots']; changedSlotIds: string[]; revisionDrafts: Array<{ slotId: string; kind: RepairAction['kind'] }>; releasedLotIds: string[]; consumedLotIds: string[]; perishableRisks: Array<{ itemId?: string; sourceSlotId?: string; sourceLine: string }> }
+type RepairFailure = Extract<WeeklyPlan, { kind: 'guidance' | 'no-eligible' }> | { kind: 'invalid-target'; nextStep: string }
+
+function initialPlan(state: PlannerState, startDate: string, optionalAction: OptionalAction = 'fallback', takeoutDates: string[] = []): WeeklyPlan {
   const outcomes = correctedOutcomes(state.outcomes)
   const excluded: Excluded[] = state.meals.flatMap((meal) => {
     if (!meal.active) return [{ mealId: meal.id, reason: 'Meal is inactive.' }]
@@ -49,11 +57,16 @@ export function buildWeeklyPlan(state: PlannerState, startDate: string, optional
 
   for (let day = 0; day < 7;) {
     const date = dateAfter(startDate, day)
+    if (takeoutDates.includes(date)) {
+      slots.push({ date, mealId: '', kind: 'takeout', score: 0, confidence: 'Estimated', reasons: ['Planned takeout.'] })
+      day++
+      continue
+    }
     const constrained = state.household.scheduleExceptions.some((exception) => exception.date === date && exception.constrained)
     const leftoverFrom = reservations.get(day)
     if (leftoverFrom !== undefined) {
       const source = slots[leftoverFrom]
-      slots.push({ ...source, date, leftoverFrom, reasons: ['Planned leftovers from an earlier dinner.', ...source.reasons] })
+      slots.push({ ...source, date, leftoverFrom, kind: 'leftover', reasons: ['Planned leftovers from an earlier dinner.', ...source.reasons] })
       day++
       continue
     }
@@ -73,7 +86,7 @@ export function buildWeeklyPlan(state: PlannerState, startDate: string, optional
       const rejected = outcomes.filter((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'rejected').length
       const historyScore = accepted || rejected ? Math.round(PLAN_WEIGHTS.acceptanceHistory * accepted / (accepted + rejected)) : PLAN_WEIGHTS.acceptanceHistory / 2
       const confidenceScore = learning.confidence === 'Established' ? PLAN_WEIGHTS.confidence : learning.confidence === 'Learning' ? PLAN_WEIGHTS.confidence / 2 : 0
-      const leftoverDay = meal.plannedLeftoverDinner ? [...Array(6 - day)].map((_, offset) => day + offset + 1).find((candidateDay) => !reservations.has(candidateDay) && state.household.scheduleExceptions.some((exception) => exception.date === dateAfter(startDate, candidateDay) && exception.constrained)) ?? [...Array(6 - day)].map((_, offset) => day + offset + 1).find((candidateDay) => !reservations.has(candidateDay)) : undefined
+      const leftoverDay = meal.plannedLeftoverDinner ? [...Array(6 - day)].map((_, offset) => day + offset + 1).find((candidateDay) => !takeoutDates.includes(dateAfter(startDate, candidateDay)) && !reservations.has(candidateDay) && state.household.scheduleExceptions.some((exception) => exception.date === dateAfter(startDate, candidateDay) && exception.constrained)) ?? [...Array(6 - day)].map((_, offset) => day + offset + 1).find((candidateDay) => !takeoutDates.includes(dateAfter(startDate, candidateDay)) && !reservations.has(candidateDay)) : undefined
       if (meal.plannedLeftoverDinner && leftoverDay === undefined) return []
       const plannedLeftovers = leftoverDay !== undefined
       const score = historyScore + (effort !== undefined ? PLAN_WEIGHTS.effortTimeFit : 0) + PLAN_WEIGHTS.scheduleContext + (meal.adaptations?.length ? PLAN_WEIGHTS.sharedAdaptation : 0) + (used ? 0 : PLAN_WEIGHTS.variety) + (plannedLeftovers ? PLAN_WEIGHTS.leftoverFit : 0) + confidenceScore
@@ -95,10 +108,62 @@ export function buildWeeklyPlan(state: PlannerState, startDate: string, optional
     const byScore = (items: typeof pool) => [...items].sort((a, b) => b.score - a.score || a.meal.id.localeCompare(b.meal.id))[0]
     if (day === 0 && optionalMeal) fallbackMealId = byScore(pool.filter((item) => item.meal !== optionalMeal))?.meal.id
     const selected = (optionalSelection && day === 0 ? pool.find((item) => item.meal === optionalMeal) : undefined) ?? byScore(pool)
-    slots.push({ date, mealId: selected.meal.id, ...(selected.recipe && { recipeId: selected.recipe.id }), score: selected.score, confidence: selected.band, reasons: selected.reasons })
+    slots.push({ date, mealId: selected.meal.id, kind: 'cook', ...(selected.recipe && { recipeId: selected.recipe.id }), score: selected.score, confidence: selected.band, reasons: selected.reasons })
     counts.set(selected.meal.id, selected.used + 1)
     if (selected.leftoverDay !== undefined) reservations.set(selected.leftoverDay, slots.length - 1)
     day++
   }
   return { kind: 'plan', slots, excluded, ...(optionalMeal && fallbackMealId && { optional: { mealId: optionalMeal.id, fallbackMealId } }) }
+}
+
+export function replanRemainingWeek(state: ReplanState, request: InitialRequest): WeeklyPlan
+export function replanRemainingWeek(state: ReplanState, request: RepairRequest): RepairCorePreview | RepairFailure
+export function replanRemainingWeek(state: ReplanState, request: InitialRequest | RepairRequest): WeeklyPlan | RepairCorePreview | RepairFailure {
+  if (request.kind === 'initial') return initialPlan(state, request.startDate, request.optionalAction, request.takeoutDates)
+  const plan = state.plans.find((item) => item.id === request.planId)
+  const target = plan?.slots.find((item) => item.date === request.targetDate)
+  if (!plan || !target || target.dinnerReadyAt) return { kind: 'invalid-target', nextStep: 'Choose an unfinished slot in the selected plan.' }
+  if (plan.slots.some((slot) => plan.slots.filter((other) => other.leftoverFromSlotId === slot.id).length > 1) || state.plans.some((candidate) => candidate.slots.some((slot) => (slot.leftoverLotIds?.length ?? 0) > 1) || state.leftoverLots.some((lot) => state.plans.flatMap((candidate) => candidate.slots).filter((slot) => slot.leftoverLotIds?.includes(lot.id)).length > 1))) return { kind: 'invalid-target', nextStep: 'Repair malformed leftover links before replanning.' }
+  const slots = plan.slots.map((slot) => ({ ...slot }))
+  const changed = new Set<string>()
+  const replace = (next: Partial<typeof target>) => { Object.assign(slots.find((slot) => slot.id === target.id)!, next); changed.add(target.id) }
+  const releasedLotIds = target.leftoverLotIds ?? []
+  let consumedLotIds: string[] = []
+  if (request.action.kind === 'simpler') replace({ recipeId: request.action.recipeId })
+  else if (request.action.kind === 'recovery') replace({ mealId: request.action.mealId, recipeId: undefined, leftoverFromSlotId: undefined, leftoverLotIds: undefined })
+  else if (request.action.kind === 'takeout') replace({ mealId: undefined, recipeId: undefined, leftoverFromSlotId: undefined, leftoverLotIds: undefined })
+  else if (request.action.kind === 'leftovers') {
+    const lot = state.leftoverLots.find((item) => item.id === (request.action as Extract<RepairAction, { kind: 'leftovers' }>).leftoverLotId && item.active !== false)
+    if (!lot || state.plans.some((candidate) => candidate.slots.some((slot) => slot.id !== target.id && slot.leftoverLotIds?.includes(lot.id)))) return { kind: 'invalid-target', nextStep: 'Choose an available leftover lot.' }
+    consumedLotIds = [lot.id]
+    replace({ mealId: lot.sourceMealId ?? target.mealId, recipeId: undefined, leftoverFromSlotId: undefined, leftoverLotIds: [lot.id] })
+  } else if (request.action.kind === 'swap') {
+    const other = slots.find((item) => item.date === (request.action as Extract<RepairAction, { kind: 'swap' }>).otherDate)
+    if (!other || other.dinnerReadyAt || target.leftoverFromSlotId || other.leftoverFromSlotId) return { kind: 'invalid-target', nextStep: 'Choose another unfinished unlinked slot.' }
+    const original = { mealId: target.mealId, recipeId: target.recipeId }
+    replace({ mealId: other.mealId, recipeId: other.recipeId }); Object.assign(other, original); changed.add(other.id)
+  } else if (request.action.kind === 'replan') replace({ recipeId: recipeFor(state.meals.find((meal) => meal.id === target.mealId)!, state.recipes)?.id })
+  const dependents = plan.slots.filter((slot) => slot.leftoverFromSlotId === target.id && !slot.dinnerReadyAt)
+  const closure = request.action.kind === 'replan' ? [target, ...dependents] : dependents
+  const candidateFor = (date: string) => state.meals.find((meal) => {
+    if (!meal.active || !mealEligibility({ hardRestrictions: state.household.hardRestrictions, safetyReview: meal.safetyReview }).eligible) return false
+    const recipe = recipeFor(meal, state.recipes)
+    if (recipeUsesUnavailableIngredient(recipe, plan.shopping?.items ?? [])) return false
+    const constrained = state.household.scheduleExceptions.some((exception) => exception.date === date && exception.constrained)
+    return !constrained || (recipe?.prepMinutes !== undefined && recipe.prepMinutes <= 30)
+  })
+  for (const slot of closure) {
+    const candidate = candidateFor(slot.date)
+    if (!candidate) return { kind: 'no-eligible', excluded: [], nextStep: 'No eligible replacement fits this repair.' }
+    const recipe = recipeFor(candidate, state.recipes)
+    const next = slots.find((item) => item.id === slot.id)!
+    if (slot.id !== target.id || request.action.kind === 'replan') Object.assign(next, { mealId: candidate.id, recipeId: recipe?.id, leftoverFromSlotId: undefined, leftoverLotIds: undefined })
+    changed.add(slot.id)
+  }
+  const perishableRisks = plan.shopping?.items.flatMap((item) => item.perishable && item.availability === 'available' && target.mealId && item.mealIds.includes(target.mealId) ? item.sourceLines.map((sourceLine, index) => ({ itemId: item.id, sourceSlotId: item.sourceSlotIds?.[index], sourceLine })) : []) ?? []
+  return { kind: 'repair', plan: { ...plan, slots }, leftoverLots: state.leftoverLots.map((lot) => consumedLotIds.includes(lot.id) ? { ...lot, active: false } : releasedLotIds.includes(lot.id) ? { ...lot, active: true } : lot), changedSlotIds: [...changed], revisionDrafts: [...changed].map((slotId) => ({ slotId, kind: request.action.kind })), releasedLotIds, consumedLotIds, perishableRisks }
+}
+
+export function buildWeeklyPlan(state: PlannerState, startDate: string, optionalAction: OptionalAction = 'fallback'): WeeklyPlan {
+  return initialPlan(state, startDate, optionalAction)
 }

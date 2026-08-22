@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildWeeklyPlan, PLAN_WEIGHTS, type WeeklyPlan } from './weeklyPlan'
+import { buildWeeklyPlan, PLAN_WEIGHTS, replanRemainingWeek, type WeeklyPlan } from './weeklyPlan'
 
 const base = { household: { diners: [], hardRestrictions: [], scheduleExceptions: [] }, recipes: [], plans: [], leftoverLots: [], outcomes: [] }
 const meal = (id: string, extra = {}) => ({ id, name: id, active: true, safetyReview: 'approved' as const, ...extra })
@@ -11,6 +11,39 @@ const plan = (preview: WeeklyPlan) => {
 const cookingIds = (preview: ReturnType<typeof plan>) => preview.slots.filter((slot) => slot.leftoverFrom === undefined).map((slot) => slot.mealId)
 
 describe('weekly plan', () => {
+  it('keeps the initial wrapper equivalent and reserves requested takeout dates', () => {
+    const state = { ...base, meals: [meal('a'), meal('b')] }
+    expect(buildWeeklyPlan(state, '2026-08-17')).toEqual(replanRemainingWeek(state, { kind: 'initial', startDate: '2026-08-17' }))
+    const preview = plan(replanRemainingWeek(state, { kind: 'initial', startDate: '2026-08-17', takeoutDates: ['2026-08-17', '2026-08-19'] }))
+    expect(preview.slots.filter((slot) => slot.kind === 'takeout')).toHaveLength(2)
+    expect(preview.slots.filter((slot) => slot.leftoverFrom !== undefined).every((slot) => slot.date !== '2026-08-17' && slot.date !== '2026-08-19')).toBe(true)
+  })
+
+  it('repairs only the selected unfinished slot and emits a revision draft', () => {
+    const state = { ...base, meals: [meal('a'), meal('b')], plans: [{ id: 'plan', slots: [{ id: 'done', date: '2026-08-17', mealId: 'a', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }, { id: 'target', date: '2026-08-18', mealId: 'a' }, { id: 'outside', date: '2026-08-19', mealId: 'b' }] }], leftoverLots: [] }
+    const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-18', action: { kind: 'takeout', takeoutContext: 'planned' } })
+    expect(preview).toMatchObject({ kind: 'repair', changedSlotIds: ['target'], revisionDrafts: [{ slotId: 'target', kind: 'takeout' }] })
+    if (preview.kind === 'repair') expect(preview.plan.slots.find((slot) => slot.id === 'outside')).toEqual(state.plans[0].slots[2])
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'replan' } })).toMatchObject({ kind: 'invalid-target' })
+  })
+
+  it('refills a source closure with an available recipe and leaves outside slots unchanged', () => {
+    const state = { ...base, meals: [meal('blocked', { recipeIds: ['blocked-r'] }), meal('available', { recipeIds: ['available-r'] })], recipes: [{ id: 'blocked-r', ingredients: ['1 cup tomatoes'] }, { id: 'available-r', ingredients: ['1 cup beans'] }], plans: [{ id: 'plan', slots: [{ id: 'source', date: '2026-08-17', mealId: 'blocked' }, { id: 'dependent', date: '2026-08-18', mealId: 'blocked', leftoverFromSlotId: 'source' }, { id: 'outside', date: '2026-08-19', mealId: 'available' }], shopping: { items: [{ id: 'tomatoes', availability: 'unavailable', perishable: false, mealIds: ['blocked'], sourceLines: ['1 cup tomatoes'], sourceSlotIds: ['source'] }] } }], leftoverLots: [] }
+    const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'replan' } })
+    expect(preview).toMatchObject({ kind: 'repair', changedSlotIds: ['source', 'dependent'], revisionDrafts: [{ slotId: 'source', kind: 'replan' }, { slotId: 'dependent', kind: 'replan' }] })
+    if (preview.kind === 'repair') {
+      expect(preview.plan.slots.find((slot) => slot.id === 'source')).toMatchObject({ mealId: 'available', recipeId: 'available-r' })
+      expect(preview.plan.slots.find((slot) => slot.id === 'outside')).toEqual(state.plans[0].slots[2])
+    }
+  })
+
+  it('reports immutable perishable contribution evidence', () => {
+    const state = { ...base, meals: [meal('a'), meal('b')], plans: [{ id: 'plan', slots: [{ id: 'target', date: '2026-08-17', mealId: 'a' }], shopping: { items: [{ id: 'milk', availability: 'available', perishable: true, mealIds: ['a'], sourceLines: ['1 cup milk'], sourceSlotIds: ['target'] }] } }], leftoverLots: [] }
+    const before = JSON.stringify(state.plans[0].shopping)
+    const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'recovery', mealId: 'b' } })
+    expect(preview).toMatchObject({ kind: 'repair', perishableRisks: [{ itemId: 'milk', sourceSlotId: 'target', sourceLine: '1 cup milk' }] })
+    expect(JSON.stringify(state.plans[0].shopping)).toBe(before)
+  })
   it('returns actionable guidance instead of a confirmable partial plan for one familiar meal', () => {
     expect(buildWeeklyPlan({ ...base, meals: [meal('meal')] }, '2026-08-17')).toMatchObject({ kind: 'guidance', nextStep: expect.stringContaining('active compatible meal') })
   })
@@ -143,6 +176,11 @@ describe('weekly plan', () => {
 
     expect(state([{ id: 'a-r', mealId: 'a', prepMinutes: 10, cookMinutes: 10 }, { id: 'b-r', mealId: 'b', prepMinutes: 10, cookMinutes: 10 }]).slots[0].recipeId).toBe('a-r')
     expect(state([{ id: 'a-r', prepMinutes: 10, cookMinutes: 10 }, { id: 'b-r', prepMinutes: 10, cookMinutes: 10 }], [meal('a', { recipeIds: ['a-r'] }), meal('b', { recipeIds: ['b-r'] })]).slots[0].recipeId).toBe('a-r')
+  })
+
+  it('keeps recipe association order instead of sorting opaque IDs', () => {
+    const preview = plan(buildWeeklyPlan({ ...base, meals: [meal('a', { recipeIds: ['z-first', 'a-second'] }), meal('b')], recipes: [{ id: 'a-second', prepMinutes: 10 }, { id: 'z-first', prepMinutes: 20 }] }, '2026-08-17'))
+    expect(preview.slots[0].recipeId).toBe('z-first')
   })
 
   it('uses active effort, not cook or elapsed time, for constrained fit', () => {
