@@ -175,7 +175,7 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
     const meal = state.meals.find((item) => item.id === target.mealId)
     const action = request.action as Extract<RepairAction, { kind: 'simpler' }>
     const recipe = state.recipes.find((item) => item.id === action.recipeId)
-    if (target.leftoverFromSlotId || target.leftoverLotIds?.length || !action.adaptationId || action.recipeId === target.recipeId || !meal?.adaptations?.some((item) => item.id === action.adaptationId && item.recipeId === action.recipeId && item.solvesIssue && item.coordinatedCooking && item.noSecondEntree && item.noUnplannedProtein && item.noSeparateTimeline && item.noExtraEffort) || !validRecipe(meal, recipe, target.date)) return { kind: 'invalid-target', nextStep: 'Choose a saved compatible simpler recipe.' }
+    if (target.leftoverFromSlotId || target.leftoverLotIds?.length || !action.adaptationId || action.recipeId === target.recipeId || action.recipeId === recipeFor(meal!, state.recipes)?.id || !meal?.adaptations?.some((item) => item.id === action.adaptationId && item.recipeId === action.recipeId && item.solvesIssue && item.coordinatedCooking && item.noSecondEntree && item.noUnplannedProtein && item.noSeparateTimeline && item.noExtraEffort) || !validRecipe(meal, recipe, target.date)) return { kind: 'invalid-target', nextStep: 'Choose a saved compatible simpler recipe.' }
     replace({ recipeId: action.recipeId })
   } else if (request.action.kind === 'recovery') {
     const meal = state.meals.find((item) => item.id === (request.action as Extract<RepairAction, { kind: 'recovery' }>).mealId)

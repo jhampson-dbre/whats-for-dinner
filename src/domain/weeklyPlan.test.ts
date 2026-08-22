@@ -138,6 +138,14 @@ describe('weekly plan', () => {
     expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'swap', otherDate: '2026-08-18' } })).toMatchObject({ kind: 'invalid-target' })
   })
 
+  it('rejects simpler repairs that use the normal recipe or skip a shared-meal guard', () => {
+    const meals = [meal('a', { recipeIds: ['a-normal', 'a-other'], adaptations: [{ id: 'normal', recipeId: 'a-normal', solvesIssue: true, coordinatedCooking: true, noSecondEntree: true, noUnplannedProtein: true, noSeparateTimeline: true, noExtraEffort: true }, { id: 'missing-guard', recipeId: 'a-other', solvesIssue: true }] }), meal('b')]
+    const state = { ...base, meals, recipes: [{ id: 'a-normal', mealId: 'a' }, { id: 'a-other', mealId: 'a' }], plans: [{ id: 'plan', slots: [{ id: 'target', date: '2026-08-17', mealId: 'a', recipeId: 'a-other' }] }], leftoverLots: [] }
+
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'simpler', recipeId: 'a-normal', adaptationId: 'normal' } })).toMatchObject({ kind: 'invalid-target' })
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'simpler', recipeId: 'a-other', adaptationId: 'missing-guard' } })).toMatchObject({ kind: 'invalid-target' })
+  })
+
   it('rejects confirmed leftovers whose source meal is inactive or unsafe', () => {
     const state = { ...base, meals: [meal('target'), meal('inactive', { active: false }), meal('unsafe', { safetyReview: 'rejected' })], plans: [{ id: 'plan', slots: [{ id: 'target', date: '2026-08-17', mealId: 'target' }] }], leftoverLots: [{ id: 'inactive-lot', sourceMealId: 'inactive' }, { id: 'unsafe-lot', sourceMealId: 'unsafe' }] }
 

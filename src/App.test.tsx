@@ -852,6 +852,7 @@ describe('shopping and repair', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
 
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[0]).toMatchObject({ mealId: 'new', recipeId: 'new-adapted', scoreReasons: expect.arrayContaining(['Uses shared adaptation with New adapted.']) })
+    expect(screen.getByText('Recipe: New adapted')).toBeInTheDocument()
   })
 
   it('does not add recovery links beyond the meal limit', () => {
@@ -1563,9 +1564,9 @@ describe('cooking outcomes', () => {
 
   it('hides recipe-less and same-recipe simpler adaptations', () => {
     const state = createEmptyAppState()
-    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, recipeIds: ['tacos-r'], adaptations: [{ id: 'missing', name: 'Missing recipe', solvesIssue: true, coordinatedCooking: true, noSecondEntree: true, noUnplannedProtein: true, noSeparateTimeline: true, noExtraEffort: true }, { id: 'same', name: 'Same recipe', recipeId: 'tacos-r', solvesIssue: true, coordinatedCooking: true, noSecondEntree: true, noUnplannedProtein: true, noSeparateTimeline: true, noExtraEffort: true }] })
-    state.recipes.push({ id: 'tacos-r', mealId: 'tacos', title: 'Tacos' })
-    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-19', mealId: 'tacos', recipeId: 'tacos-r' }] } as never)
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, recipeIds: ['tacos-r', 'tacos-other'], adaptations: [{ id: 'missing', name: 'Missing recipe', solvesIssue: true, coordinatedCooking: true, noSecondEntree: true, noUnplannedProtein: true, noSeparateTimeline: true, noExtraEffort: true }, { id: 'same', name: 'Same recipe', recipeId: 'tacos-r', solvesIssue: true, coordinatedCooking: true, noSecondEntree: true, noUnplannedProtein: true, noSeparateTimeline: true, noExtraEffort: true }] })
+    state.recipes.push({ id: 'tacos-r', mealId: 'tacos', title: 'Tacos' }, { id: 'tacos-other', mealId: 'tacos', title: 'Other tacos' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-19', mealId: 'tacos', recipeId: 'tacos-other' }] } as never)
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
     render(<App />)
