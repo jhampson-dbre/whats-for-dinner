@@ -1,6 +1,6 @@
 # What's for Dinner? Adaptive Planning MVP
 
-Status: Pilot onboarding correction architecture and senior reviewed; implementation paused
+Status: Pilot onboarding correction approved; implementation paused
 Date: 2026-08-21
 Tracker: EPIC-1
 
