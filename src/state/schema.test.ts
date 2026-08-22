@@ -173,6 +173,16 @@ describe('V1 state validation', () => {
     expect(importAppState(JSON.stringify(state))).toEqual(state)
   })
 
+  it('keeps inactive lots and leftover outcomes valid after their completed dinners are corrected to takeout', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan-1', slots: [{ id: 'source', date: '2026-08-17', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }, { id: 'target', date: '2026-08-18', dinnerReadyAt: '2026-08-18T18:00:00.000Z' }] } as never)
+    state.leftoverLots.push({ id: 'lot-1', sourcePlanId: 'plan-1', sourceSlotId: 'source', sourceMealId: 'meal-1', active: false })
+    state.outcomes.push({ id: 'source-old', planId: 'plan-1', planSlotId: 'source', mealId: 'meal-1' } as never, { id: 'source-correction', planId: 'plan-1', planSlotId: 'source', correctionOfOutcomeId: 'source-old' } as never, { id: 'target-old', planId: 'plan-1', planSlotId: 'target', mealId: 'meal-1', leftoverServing: true } as never, { id: 'target-correction', planId: 'plan-1', planSlotId: 'target', correctionOfOutcomeId: 'target-old' } as never)
+
+    expect(importAppState(JSON.stringify(state))).toEqual(state)
+  })
+
   it('keeps actual-leftover dinner-ready exemption V3-only', () => {
     const actualLotDinner = (schemaVersion: 2 | 3) => ({ schemaVersion, household: { diners: [], hardRestrictions: [], scheduleExceptions: [] }, meals: [{ id: 'meal-1', name: 'Soup', active: true }], recipes: [], plans: [{ id: 'plan-1', slots: [{ id: 'source', date: '2026-08-17', mealId: 'meal-1' }, { id: 'target', date: '2026-08-18', mealId: 'meal-1', leftoverLotIds: ['lot-1'], dinnerReadyAt: '2026-08-18T18:00:00.000Z' }] }], leftoverLots: [{ id: 'lot-1', sourcePlanId: 'plan-1', sourceSlotId: 'source', sourceMealId: 'meal-1', active: true }], outcomes: [] })
 

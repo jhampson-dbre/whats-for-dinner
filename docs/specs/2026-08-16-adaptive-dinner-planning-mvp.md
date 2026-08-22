@@ -1,6 +1,6 @@
 # What's for Dinner? Adaptive Planning MVP
 
-Status: Implemented; hands-off-night pilot correction approved for review, implementation paused
+Status: Implemented; pilot validation active
 Date: 2026-08-22
 Tracker: EPIC-1, EPIC-4, TREK-15
 
@@ -165,6 +165,16 @@ timestamp, and never records active-effort or elapsed-cooking evidence. Acceptan
 leftover outcome feedback remain available. If takeout replaces either end of an
 unfinished leftover link, the preview removes that dependency and replans its affected
 unfinished slot; it never silently converts the target into an ordinary cooking night.
+
+A completed dinner may be explicitly corrected to **not cooked; got takeout instead**.
+The correction preserves dinner-completion history but removes false meal, recipe,
+cooking-effort, and leftover-yield evidence. Correcting a cooking source deactivates its
+produced leftover lots and atomically replans unfinished dependent dinners. Correcting a
+completed leftover dinner releases its confirmed leftover lot, when present, without
+changing the source cooking dinner. The app never silently rewrites another completed
+dinner: a source correction that would contradict a completed leftover consumer is
+rejected until the dependent dinner is corrected first. The takeout revision and outcome
+correction remain auditable and must not train meal or recipe learning as cooking evidence.
 
 Planner preview output is discriminated:
 
@@ -658,6 +668,11 @@ and imported recipes default unmarked. Cover canonical capacity replacement and 
 preservation, both swap destinations, valid planned and selected actual leftovers, and
 the rule against silently consuming actual lots. Add one Testing Library flow that marks
 a night and recipe, then previews the resulting plan.
+
+For completed-dinner takeout correction, cover a cooking source with an unfinished
+leftover dependent, a planned and actual leftover target, produced-lot deactivation and
+consumed-lot release, corrected outcome evidence, and rejection when another completed
+dinner would be contradicted. Each failure leaves plan, outcomes, and lots unchanged.
 
 ## MVP acceptance signals
 

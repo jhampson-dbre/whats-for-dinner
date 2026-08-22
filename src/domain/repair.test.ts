@@ -63,4 +63,34 @@ describe('repair', () => {
     const dependent = { ...plan, slots: [{ ...plan.slots[0] }, { ...plan.slots[1] }, { ...plan.slots[2], leftoverFromSlotId: 'target' }] }
     expect(() => previewRepair(state(dependent), dependent, { slotId: 'target', kind: 'swap', swapSlotId: 'future' })).toThrow('unlinked')
   })
+
+  it('corrects a completed cooking source to takeout, replans its unfinished dependent, and deactivates produced lots', () => {
+    const completed = { ...plan, slots: [{ ...plan.slots[0] }, { ...plan.slots[1], mealId: 'soup', cookingStartedAt: '2026-08-18T17:00:00.000Z', dinnerReadyAt: '2026-08-18T18:00:00.000Z' }, { ...plan.slots[2], mealId: 'soup', leftoverFromSlotId: 'target' }] }
+    const repair = previewRepair({ ...state(completed), leftoverLots: [{ id: 'produced', sourceMealId: 'soup', sourcePlanId: 'plan', sourceSlotId: 'target', active: true }] }, completed, { slotId: 'target', kind: 'takeout' })
+
+    expect(repair.plan.slots.find((slot) => slot.id === 'target')).toMatchObject({ dinnerReadyAt: '2026-08-18T18:00:00.000Z', mealId: undefined, recipeId: undefined })
+    expect(repair.plan.slots.find((slot) => slot.id === 'target')).not.toHaveProperty('cookingStartedAt')
+    expect(repair.plan.slots.find((slot) => slot.id === 'future')).toMatchObject({ leftoverFromSlotId: undefined })
+    expect(repair.leftoverLots).toEqual([expect.objectContaining({ id: 'produced', active: false })])
+  })
+
+  it('corrects a completed leftover dinner to takeout, releases its lot, and keeps the source cooking dinner', () => {
+    const completed = { ...plan, slots: [{ ...plan.slots[0], mealId: 'soup', cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }, { ...plan.slots[1], mealId: 'soup', leftoverLotIds: ['lot-1'], dinnerReadyAt: '2026-08-18T18:00:00.000Z' }, plan.slots[2]] }
+    const repair = previewRepair(state(completed), completed, { slotId: 'target', kind: 'takeout' })
+
+    expect(repair.plan.slots.find((slot) => slot.id === 'done')).toMatchObject({ mealId: 'soup', cookingStartedAt: '2026-08-17T17:00:00.000Z' })
+    expect(repair.plan.slots.find((slot) => slot.id === 'target')).toMatchObject({ dinnerReadyAt: '2026-08-18T18:00:00.000Z', leftoverLotIds: undefined })
+    expect(repair.leftoverLots).toEqual([expect.objectContaining({ id: 'lot-1', active: true })])
+  })
+
+  it('requires correcting a completed dependent before its completed leftover source', () => {
+    const completed = { ...plan, slots: [{ ...plan.slots[0] }, { ...plan.slots[1], cookingStartedAt: '2026-08-18T17:00:00.000Z', dinnerReadyAt: '2026-08-18T18:00:00.000Z' }, { ...plan.slots[2], leftoverFromSlotId: 'target', dinnerReadyAt: '2026-08-19T18:00:00.000Z' }] }
+    expect(() => previewRepair(state(completed), completed, { slotId: 'target', kind: 'takeout' })).toThrow('Correct the completed dependent dinner first')
+  })
+
+  it('requires correcting a completed actual-leftover consumer before its source', () => {
+    const completed = { ...plan, slots: [{ ...plan.slots[0] }, { ...plan.slots[1], cookingStartedAt: '2026-08-18T17:00:00.000Z', dinnerReadyAt: '2026-08-18T18:00:00.000Z' }, { ...plan.slots[2], leftoverLotIds: ['produced'], dinnerReadyAt: '2026-08-19T18:00:00.000Z' }] }
+    const repairState = { ...state(completed), leftoverLots: [{ id: 'produced', sourcePlanId: 'plan', sourceSlotId: 'target', sourceMealId: 'tacos', active: true }] }
+    expect(() => previewRepair(repairState, completed, { slotId: 'target', kind: 'takeout' })).toThrow('Correct the completed dependent dinner first')
+  })
 })

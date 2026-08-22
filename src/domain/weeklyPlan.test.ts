@@ -41,7 +41,7 @@ describe('weekly plan', () => {
     const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-18', action: { kind: 'takeout', takeoutContext: 'planned' } })
     expect(preview).toMatchObject({ kind: 'repair', changedSlotIds: ['target'], revisionDrafts: [{ slotId: 'target', kind: 'takeout' }] })
     if (preview.kind === 'repair') expect(preview.plan.slots.find((slot) => slot.id === 'outside')).toEqual(state.plans[0].slots[2])
-    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'takeout', takeoutContext: 'planned' } })).toMatchObject({ kind: 'invalid-target' })
+    expect(replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'recovery', mealId: 'b' } })).toMatchObject({ kind: 'invalid-target' })
   })
 
   it('turns an unfinished leftover source into takeout and replans its dependent', () => {

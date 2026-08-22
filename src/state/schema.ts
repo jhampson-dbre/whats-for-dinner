@@ -146,8 +146,9 @@ const appStateSchema = (schemaVersion: 1 | 2 | 3 | 4, recipe = recipeSchema, pla
     if (value.sourceMealId) requireReference(meals.has(value.sourceMealId), ['leftoverLots', index, 'sourceMealId'], 'meal')
     const source = slotRecords.find(({ slot }) => slot.id === value.sourceSlotId)
     if (value.sourcePlanId && source && source.plan.id !== value.sourcePlanId) ctx.addIssue({ code: 'custom', path: ['leftoverLots', index, 'sourceSlotId'], message: 'Source slot must belong to source plan.' })
-    if (value.sourceMealId && source && source.slot.mealId !== value.sourceMealId) ctx.addIssue({ code: 'custom', path: ['leftoverLots', index, 'sourceMealId'], message: 'Source meal must match source slot.' })
+    if (value.active !== false && value.sourceMealId && source && source.slot.mealId !== value.sourceMealId) ctx.addIssue({ code: 'custom', path: ['leftoverLots', index, 'sourceMealId'], message: 'Source meal must match source slot.' })
   })
+  const correctedOutcomeIds = new Set(state.outcomes.flatMap((outcome) => outcome.correctionOfOutcomeId ? [outcome.correctionOfOutcomeId] : []))
   state.outcomes.forEach((value, index) => {
     if (value.planId) requireReference(plans.has(value.planId), ['outcomes', index, 'planId'], 'plan')
     if (value.planSlotId) requireReference(slots.has(value.planSlotId), ['outcomes', index, 'planSlotId'], 'plan slot')
@@ -155,13 +156,13 @@ const appStateSchema = (schemaVersion: 1 | 2 | 3 | 4, recipe = recipeSchema, pla
     if (value.recipeId) requireReference(recipes.has(value.recipeId), ['outcomes', index, 'recipeId'], 'recipe')
     const source = slotRecords.find(({ slot }) => slot.id === value.planSlotId)
     if (value.planId && source && source.plan.id !== value.planId) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'planSlotId'], message: 'Plan slot must belong to plan.' })
-    if (value.mealId && source && source.slot.mealId !== value.mealId) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'mealId'], message: 'Outcome meal must match plan slot.' })
-    if (value.recipeId && source && source.slot.recipeId !== value.recipeId) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'recipeId'], message: 'Outcome recipe must match plan slot.' })
-    if ((value as { leftoverServing?: true }).leftoverServing && !source?.slot.leftoverFromSlotId && !source?.slot.leftoverLotIds?.length) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'leftoverServing'], message: 'Leftover serving must reference a leftover-consumer slot.' })
+    if (!correctedOutcomeIds.has(value.id) && value.mealId && source && source.slot.mealId !== value.mealId) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'mealId'], message: 'Outcome meal must match plan slot.' })
+    if (!correctedOutcomeIds.has(value.id) && value.recipeId && source && source.slot.recipeId !== value.recipeId) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'recipeId'], message: 'Outcome recipe must match plan slot.' })
+    if (!correctedOutcomeIds.has(value.id) && (value as { leftoverServing?: true }).leftoverServing && !source?.slot.leftoverFromSlotId && !source?.slot.leftoverLotIds?.length) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'leftoverServing'], message: 'Leftover serving must reference a leftover-consumer slot.' })
     if (value.correctionOfOutcomeId) {
       const prior = state.outcomes.slice(0, index).find((outcome) => outcome.id === value.correctionOfOutcomeId)
       requireReference(Boolean(prior), ['outcomes', index, 'correctionOfOutcomeId'], 'earlier outcome')
-      if (prior && (prior.planId !== value.planId || prior.planSlotId !== value.planSlotId || prior.mealId !== value.mealId)) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'correctionOfOutcomeId'], message: 'Correction must target the same plan slot and meal.' })
+      if (prior && (prior.planId !== value.planId || prior.planSlotId !== value.planSlotId || (value.mealId !== undefined && prior.mealId !== value.mealId))) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'correctionOfOutcomeId'], message: 'Correction must target the same plan slot and meal.' })
       if (state.outcomes.filter((outcome) => outcome.correctionOfOutcomeId === value.correctionOfOutcomeId).length > 1) ctx.addIssue({ code: 'custom', path: ['outcomes', index, 'correctionOfOutcomeId'], message: 'Outcome corrections cannot fork.' })
     }
     value.personFeedback?.forEach((feedback, feedbackIndex) => requireReference(diners.has(feedback.dinerId), ['outcomes', index, 'personFeedback', feedbackIndex, 'dinerId'], 'diner'))
