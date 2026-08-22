@@ -741,6 +741,31 @@ describe('shopping and repair', () => {
     expect(screen.queryByRole('button', { name: 'Review needed' })).not.toBeInTheDocument()
   })
 
+  it('keeps a repair preview, notices, storage, and rendered plan unchanged when repair confirmation fails V3 validation', () => {
+    const duplicateId = '00000000-0000-0000-0000-000000000001'
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' }, { id: 'soup', name: 'Soup', active: true, safetyReview: 'approved' })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'tacos-slot', date: '2026-08-17', mealId: 'tacos' }, { id: 'soup-slot', date: '2026-08-18', mealId: 'soup' }], repairRevisions: [{ id: duplicateId, createdAt: '2026-08-17T00:00:00.000Z', slotId: 'tacos-slot', kind: 'swap' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Hard restriction'), { target: { value: 'Peanuts' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add restriction' }))
+    const savedBeforeRepair = localStorage.getItem(APP_STATE_STORAGE_KEY)
+    openPlanRepair()
+    fireEvent.click(screen.getByRole('button', { name: 'Swap with Soup' }))
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue(duplicateId)
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+
+    expect(localStorage.getItem(APP_STATE_STORAGE_KEY)).toBe(savedBeforeRepair)
+    expect(screen.getAllByText(/2026-08-17: Tacos/)).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Confirm repair' })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Review needed' })).toHaveLength(2)
+    expect(screen.getByRole('status')).toHaveTextContent('Changes are invalid and were not applied.')
+    expect(screen.getByRole('status')).not.toHaveTextContent('Plan repair confirmed.')
+  })
+
   it('consumes a one-dinner leftover lot only when its repair is confirmed', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'tacos', name: 'Tacos', active: true })
