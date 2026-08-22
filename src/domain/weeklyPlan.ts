@@ -220,6 +220,10 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
     }
     repairedPlans.push({ ...candidatePlan, slots: nextSlots })
   }
+  for (const candidatePlan of repairedPlans) for (const slot of candidatePlan.slots) {
+    const original = repairState.plans.find((item) => item.id === candidatePlan.id)?.slots.find((item) => item.id === slot.id)
+    if (!slot.dinnerReadyAt && original?.cookingStartedAt && (slot.mealId !== original.mealId || slot.recipeId !== original.recipeId)) delete slot.cookingStartedAt
+  }
   if (request.action.kind === 'swap' && !slots.filter((slot) => slot.id === target.id || slot.date === (request.action as Extract<RepairAction, { kind: 'swap' }>).otherDate).every((slot) => !slot.mealId || slot.leftoverFromSlotId || slot.leftoverLotIds?.length || fitsCookingCapacity(state, state.meals.find((meal) => meal.id === slot.mealId)!, state.recipes.find((recipe) => recipe.id === slot.recipeId) ?? recipeFor(state.meals.find((meal) => meal.id === slot.mealId)!, state.recipes), slot.date))) return { kind: 'invalid-target', nextStep: 'Both swapped meals must fit their dates.' }
   const changedSlotIds = repairedPlans.flatMap((candidatePlan) => candidatePlan.slots.filter((slot, index) => JSON.stringify(slot) !== JSON.stringify(repairState.plans.find((item) => item.id === candidatePlan.id)!.slots[index])).map((slot) => slot.id))
   const replannedSlotIds = new Set(closure.map((slot) => slot.id))

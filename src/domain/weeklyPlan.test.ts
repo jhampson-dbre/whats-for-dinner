@@ -91,6 +91,14 @@ describe('weekly plan', () => {
     }
   })
 
+  it('clears a stale cooking start when replanning an unfinished dinner', () => {
+    const state = { ...base, meals: [meal('blocked', { recipeIds: ['blocked-r'] }), meal('available', { recipeIds: ['available-r'] })], recipes: [{ id: 'blocked-r', ingredients: ['1 cup tomatoes'] }, { id: 'available-r', ingredients: ['1 cup beans'] }], plans: [{ id: 'plan', slots: [{ id: 'target', date: '2026-08-17', mealId: 'blocked', recipeId: 'blocked-r', cookingStartedAt: '2026-08-17T17:00:00.000Z' }], shopping: { items: [{ id: 'tomatoes', availability: 'unavailable', perishable: false, mealIds: ['blocked'], sourceLines: ['1 cup tomatoes'], sourceSlotIds: ['target'] }] } }], leftoverLots: [] }
+    const preview = replanRemainingWeek(state, { kind: 'repair', planId: 'plan', targetDate: '2026-08-17', action: { kind: 'replan' } })
+
+    if (preview.kind === 'repair') expect(preview.plan.slots[0]).toMatchObject({ mealId: 'available', recipeId: 'available-r' })
+    if (preview.kind === 'repair') expect(preview.plan.slots[0]).not.toHaveProperty('cookingStartedAt')
+  })
+
   it('reports immutable perishable contribution evidence', () => {
     const state = { ...base, meals: [meal('a'), meal('b')], plans: [{ id: 'plan', slots: [{ id: 'target', date: '2026-08-17', mealId: 'a' }], shopping: { items: [{ id: 'milk', availability: 'available', perishable: true, mealIds: ['a'], sourceLines: ['1 cup milk'], sourceSlotIds: ['target'] }] } }], leftoverLots: [] }
     const before = JSON.stringify(state.plans[0].shopping)

@@ -1571,6 +1571,65 @@ describe('cooking outcomes', () => {
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').household.scheduleExceptions).toEqual([expect.objectContaining({ date: '2026-08-17', handsOff: true })])
   })
 
+  it('lets the household turn an ineligible hands-off preview date into planned takeout', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'first', name: 'First', active: true, safetyReview: 'approved' }, { id: 'second', name: 'Second', active: true, safetyReview: 'approved' })
+    state.household.scheduleExceptions.push({ id: 'hands-off', date: '2026-08-17', handsOff: true })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    expect(screen.getByText(/Add or confirm a meal that fits every constrained or hands-off night/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Plan takeout for 2026-08-17' }))
+
+    expect(screen.getByRole('button', { name: 'Confirm weekly plan' })).toBeInTheDocument()
+  })
+
+  it('handles a hands-off plan through replan, completion, and completed takeout correction', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'slow', name: 'Slow stew', active: true, safetyReview: 'approved', recipeIds: ['slow-r'] }, { id: 'other', name: 'Other dinner', active: true, safetyReview: 'approved' })
+    state.recipes.push({ id: 'slow-r', title: 'Slow stew', mealId: 'slow' })
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    fireEvent.click(screen.getByLabelText('Hands-off slow cooker Slow stew'))
+    fireEvent.change(screen.getByLabelText('Exception date'), { target: { value: '2026-08-17' } })
+    fireEvent.click(screen.getByLabelText('Hands-off night'))
+    fireEvent.click(screen.getByRole('button', { name: 'Add exception' }))
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
+
+    fireEvent.change(screen.getByLabelText('Exception date'), { target: { value: '2026-08-18' } })
+    fireEvent.click(screen.getByLabelText('Hands-off night'))
+    fireEvent.click(screen.getByRole('button', { name: 'Add exception' }))
+    const plan = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0]
+    const target = plan.slots.find((slot: { date: string }) => slot.date === '2026-08-18')
+    fireEvent.change(screen.getByLabelText('Plan to repair'), { target: { value: plan.id } })
+    fireEvent.change(screen.getByLabelText('Date to repair'), { target: { value: target.id } })
+    fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Replan with eligible meal' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+
+    const repaired = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0]
+    const repairedTarget = repaired.slots.find((slot: { id: string }) => slot.id === target.id)
+    expect(repairedTarget).toMatchObject({ mealId: 'slow', recipeId: 'slow-r' })
+    const targetItem = screen.getByText(/^2026-08-18: Slow stew/)
+    fireEvent.click(within(targetItem).getByRole('button', { name: 'Start cooking Slow stew' }))
+    fireEvent.click(within(targetItem).getByRole('button', { name: 'Dinner’s ready Slow stew' }))
+
+    fireEvent.change(screen.getByLabelText('Plan to repair'), { target: { value: repaired.id } })
+    fireEvent.change(screen.getByLabelText('Date to repair'), { target: { value: repairedTarget.id } })
+    fireEvent.click(screen.getByRole('button', { name: 'Plans changed' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose takeout' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm repair' }))
+    const corrected = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots.find((slot: { id: string }) => slot.id === target.id)
+    expect(corrected).toMatchObject({ dinnerReadyAt: expect.any(String) })
+    expect(corrected).not.toHaveProperty('mealId')
+  })
+
   it('canonically replaces duplicate date exceptions at the cap with the latest note', () => {
     const state = createEmptyAppState()
     state.household.scheduleExceptions.push(...Array.from({ length: 98 }, (_, index) => ({ id: `filler-${index}`, date: '2026-09-01', note: 'filler' })), { id: 'first', date: '2026-08-17', note: 'first note', constrained: true }, { id: 'latest', date: '2026-08-17', note: 'latest note', constrained: true })
