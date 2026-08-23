@@ -292,6 +292,12 @@ describe('weekly plan', () => {
     expect(incompatible).toMatchObject({ kind: 'no-eligible', excluded: expect.arrayContaining([expect.objectContaining({ reason: 'Not compatible with household restrictions.' })]) })
   })
 
+  it('identifies the date and capacity that blocks an otherwise eligible plan', () => {
+    const preview = buildWeeklyPlan({ ...base, household: { ...base.household, scheduleExceptions: [{ id: 'hands-off', date: '2026-08-25', handsOff: true }] }, meals: [meal('first'), meal('second')] }, '2026-08-25')
+
+    expect(preview).toMatchObject({ kind: 'no-eligible', blockedDates: [{ date: '2026-08-25', capacity: 'hands-off' }] })
+  })
+
   it('returns guidance for unfamiliar meals without a familiar fallback', () => {
     expect(buildWeeklyPlan({ ...base, meals: [meal('new', { provisional: true })] }, '2026-08-17')).toMatchObject({ kind: 'guidance', nextStep: expect.stringContaining('familiar meal') })
   })

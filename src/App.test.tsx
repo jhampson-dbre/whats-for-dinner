@@ -1806,17 +1806,26 @@ describe('cooking outcomes', () => {
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').household.scheduleExceptions).toEqual([expect.objectContaining({ date: '2026-08-17', handsOff: true })])
   })
 
-  it('lets the household turn an ineligible hands-off preview date into planned takeout', () => {
+  it('shows only the blocked hands-off date for takeout and keeps exclusions collapsed', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'first', name: 'First', active: true, safetyReview: 'approved' }, { id: 'second', name: 'Second', active: true, safetyReview: 'approved' })
-    state.household.scheduleExceptions.push({ id: 'hands-off', date: '2026-08-17', handsOff: true })
+    state.household.scheduleExceptions.push({ id: 'hands-off', date: '2026-08-25', handsOff: true })
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
-    render(<App />)
-    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-17' } })
+    const { container } = render(<App />)
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-25' } })
     fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
-    expect(screen.getByText(/Add or confirm a meal that fits every constrained or hands-off night/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Plan takeout for 2026-08-17' }))
+    expect(screen.getByText(/2026-08-25 needs a hands-off dinner/)).toBeInTheDocument()
+    expect(screen.getByText(/Mark a slow-cooker recipe, plan leftovers, change this schedule exception to quick-cook/)).toBeInTheDocument()
+    expect(screen.queryByText('Add or confirm a meal that fits every constrained or hands-off night.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Plan takeout for 2026-08-25' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Plan takeout for 2026-08-26' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Confirm weekly plan' })).not.toBeInTheDocument()
+    const exclusions = container.querySelector('details')
+    expect(exclusions).not.toHaveAttribute('open')
+    fireEvent.click(screen.getByText('2 meal exclusions'))
+    expect(screen.getAllByText(/Does not fit hands-off night on 2026-08-25/)).toHaveLength(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Plan takeout for 2026-08-25' }))
 
     expect(screen.getByRole('button', { name: 'Confirm weekly plan' })).toBeInTheDocument()
   })

@@ -14,9 +14,10 @@ type PlannerState = { household: { diners?: { id: string; active: boolean }[]; h
 type PlanSlot = { date: string; mealId: string; recipeId?: string; leftoverFrom?: number; kind?: 'cook' | 'leftover' | 'takeout'; score: number; confidence: 'Estimated' | 'Learning' | 'Established'; reasons: string[] }
 type OptionalAction = 'fallback' | 'use' | 'adapt' | 'reject'
 type Excluded = { mealId: string; reason: string }
+type BlockedDate = { date: string; capacity: 'normal' | 'constrained' | 'hands-off' }
 export type WeeklyPlan = { kind: 'plan'; slots: PlanSlot[]; excluded: Excluded[]; optional?: { mealId: string; fallbackMealId: string } }
   | { kind: 'guidance'; excluded: Excluded[]; nextStep: string }
-  | { kind: 'no-eligible'; excluded: Excluded[]; nextStep: string }
+  | { kind: 'no-eligible'; excluded: Excluded[]; nextStep: string; blockedDates: BlockedDate[] }
 
 function dateAfter(start: string, days: number): string {
   const date = new Date(`${start}T00:00:00Z`)
@@ -72,7 +73,7 @@ function initialPlan(state: PlannerState, startDate: string, optionalAction: Opt
   const eligible = state.meals.filter((meal) => !excluded.some((item) => item.mealId === meal.id))
   const unfamiliar = eligible.filter((meal) => meal.provisional && !outcomes.some((outcome) => outcome.mealId === meal.id && outcome.acceptance === 'accepted'))
   const familiar = eligible.filter((meal) => !unfamiliar.includes(meal))
-  if (!familiar.length) return eligible.length ? { kind: 'guidance', excluded, nextStep: 'Add an active compatible familiar meal before planning unfamiliar meals.' } : { kind: 'no-eligible', excluded, nextStep: 'Activate or confirm a compatible meal, then try again.' }
+  if (!familiar.length) return eligible.length ? { kind: 'guidance', excluded, nextStep: 'Add an active compatible familiar meal before planning unfamiliar meals.' } : { kind: 'no-eligible', excluded, nextStep: 'Activate or confirm a compatible meal, then try again.', blockedDates: [] }
   if (familiar.length === 1) return { kind: 'guidance', excluded, nextStep: 'Add another active compatible meal for a useful first plan.' }
 
   const optionalMeal = unfamiliar.sort((a, b) => a.id.localeCompare(b.id))[0]
@@ -137,7 +138,7 @@ function initialPlan(state: PlannerState, startDate: string, optionalAction: Opt
         `${learning.confidence}: ${learning.confidence === 'Estimated' ? 'no household outcomes yet.' : learning.confidence === 'Learning' ? 'one or two household outcomes.' : 'three or more household outcomes.'}`,
       ] }]
     })
-    if (!ranked.length) return { kind: 'no-eligible', excluded, nextStep: 'Add or confirm a meal that fits every constrained or hands-off night.' }
+    if (!ranked.length) return { kind: 'no-eligible', excluded, nextStep: 'Add or confirm a meal that fits every constrained or hands-off night.', blockedDates: [{ date, capacity }] }
     const leastUsed = Math.min(...ranked.map((item) => item.used))
     let pool = ranked.filter((item) => item.used === leastUsed)
     const lastCooking = [...slots].reverse().find((slot) => slot.leftoverFrom === undefined)?.mealId
@@ -220,7 +221,7 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
   })
   for (const slot of closure) {
     const candidate = candidateFor(plan, slot.date)
-    if (!candidate) return { kind: 'no-eligible', excluded: [], nextStep: 'No eligible replacement fits this repair.' }
+    if (!candidate) return { kind: 'no-eligible', excluded: [], nextStep: 'No eligible replacement fits this repair.', blockedDates: [] }
     const recipe = recipeFor(candidate, state.recipes)
     const next = slots.find((item) => item.id === slot.id)!
     if (slot.id !== target.id || request.action.kind === 'replan') Object.assign(next, { mealId: candidate.id, recipeId: recipe?.id, leftoverFromSlotId: undefined, leftoverLotIds: undefined })
@@ -234,7 +235,7 @@ export function replanRemainingWeek(state: PlannerState | ReplanState, request: 
     const nextSlots = candidatePlan.slots.map((slot) => ({ ...slot }))
     for (const slot of dependentSlots) {
       const candidate = candidateFor(candidatePlan, slot.date)
-      if (!candidate) return { kind: 'no-eligible', excluded: [], nextStep: 'No eligible replacement fits this repair.' }
+      if (!candidate) return { kind: 'no-eligible', excluded: [], nextStep: 'No eligible replacement fits this repair.', blockedDates: [] }
       const recipe = recipeFor(candidate, state.recipes)
       Object.assign(nextSlots.find((item) => item.id === slot.id)!, { mealId: candidate.id, recipeId: recipe?.id, leftoverFromSlotId: undefined, leftoverLotIds: undefined })
     }
