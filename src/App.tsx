@@ -286,7 +286,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     const overlaps = state.plans.filter((plan) => plan.confirmed && plan.slots.some((slot) => !slot.dinnerReadyAt && verified.slots.some((preview) => preview.date === slot.date)))
     const replaceable = overlaps.every((plan) => {
       const slotIds = new Set(plan.slots.map((slot) => slot.id))
-      return !plan.slots.some((slot) => slot.cookingStartedAt || slot.dinnerReadyAt) && !plan.shopping && !plan.repairRevisions?.length && !state.outcomes.some((outcome) => outcome.planId === plan.id || Boolean(outcome.planSlotId && slotIds.has(outcome.planSlotId))) && !state.leftoverLots.some((lot) => lot.sourcePlanId === plan.id || Boolean(lot.sourceSlotId && slotIds.has(lot.sourceSlotId)))
+      return !plan.slots.some((slot) => slot.cookingStartedAt || slot.dinnerReadyAt || slot.leftoverLotIds?.length || slot.leftoverDependencyIds?.length) && !plan.shopping && !plan.repairRevisions?.length && !state.outcomes.some((outcome) => outcome.planId === plan.id || Boolean(outcome.planSlotId && slotIds.has(outcome.planSlotId))) && !state.leftoverLots.some((lot) => lot.sourcePlanId === plan.id || Boolean(lot.sourceSlotId && slotIds.has(lot.sourceSlotId)))
     })
     const replacements = replaceable ? new Set(overlaps.map((plan) => plan.id)) : new Set<string>()
     if (overlaps.length && !replaceable) { setRepairPlanId(''); setRepairSlotId(undefined); setRepairOpen(false); setWeeklyPreview(undefined); setMessage('Choose the overlapping confirmed plan and unfinished date explicitly before confirming a new plan.'); return }
