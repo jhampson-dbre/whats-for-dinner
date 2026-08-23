@@ -543,6 +543,41 @@ describe('weekly planning', () => {
     expect(saved.plans[0].slots.map((slot: { date: string }) => slot.date)).toContain('2026-08-30')
   })
 
+  it('replaces an untouched overlapping week with planned takeout configuration', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' }, { id: 'soup', name: 'Soup', active: true, safetyReview: 'approved' })
+    state.plans.push({ id: 'legacy', confirmed: true, slots: ['23', '24', '25', '26', '27', '28', '29'].map((day) => ({ id: `legacy-${day}`, date: `2026-08-${day}`, ...(day !== '29' && { mealId: 'tacos' }) })), repairRevisions: [{ id: 'planned-takeout', createdAt: '2026-08-23T12:00:00.000Z', slotId: 'legacy-29', kind: 'takeout', takeoutContext: 'planned' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-24' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
+
+    const saved = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    expect(confirm).toHaveBeenCalledWith('Replace the existing untouched weekly plan(s)? Planned takeout choices will also be replaced.')
+    expect(saved.plans).toHaveLength(1)
+    expect(saved.plans[0]).not.toMatchObject({ id: 'legacy' })
+    expect(saved.plans[0].slots.map((slot: { date: string }) => slot.date)).toContain('2026-08-30')
+  })
+
+  it('keeps an overlapping week with a non-planned repair revision on the repair path', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' }, { id: 'soup', name: 'Soup', active: true, safetyReview: 'approved' })
+    state.plans.push({ id: 'legacy', confirmed: true, slots: ['23', '24', '25', '26', '27', '28', '29'].map((day) => ({ id: `legacy-${day}`, date: `2026-08-${day}`, mealId: 'tacos' })), repairRevisions: [{ id: 'repair', createdAt: '2026-08-23T12:00:00.000Z', slotId: 'legacy-23', kind: 'recovery' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-24' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm weekly plan' }))
+
+    expect(confirm).not.toHaveBeenCalled()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans).toEqual([expect.objectContaining({ id: 'legacy' })])
+  })
+
   it.each(['leftoverLotIds', 'leftoverDependencyIds'] as const)('keeps an overlapping week with slot %s evidence on the repair path', (field) => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'tacos', name: 'Tacos', active: true, safetyReview: 'approved' }, { id: 'soup', name: 'Soup', active: true, safetyReview: 'approved' })
