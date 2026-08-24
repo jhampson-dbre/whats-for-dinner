@@ -401,7 +401,8 @@ describe('weekly planning', () => {
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Preview weekly plan' }))
     expect(screen.getByRole('heading', { name: 'Weekly plan preview' })).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Week starts'), { target: { value: '2026-08-24' } })
+    const weekStarts = screen.getByLabelText('Week starts') as HTMLInputElement
+    fireEvent.change(weekStarts, { target: { value: weekStarts.value === '2026-08-24' ? '2026-08-31' : '2026-08-24' } })
 
     expect(screen.queryByRole('heading', { name: 'Weekly plan preview' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Confirm weekly plan' })).not.toBeInTheDocument()
@@ -1582,6 +1583,25 @@ describe('cooking outcomes', () => {
     expect(screen.getByLabelText('Leftover coverage')).toHaveValue('some')
     fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes).toEqual([expect.any(Object), expect.objectContaining({ correctionOfOutcomeId: expect.any(String), activeEffortMinutes: 12, leftoverCoverage: 'some' })])
+  })
+
+  it('does not save dinner-covering feedback when leftover history is full', () => {
+    const state = createEmptyAppState()
+    state.household.diners.push({ id: 'ava', name: 'Ava', active: true })
+    state.meals.push({ id: 'tacos', name: 'Tacos', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'tacos', cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T17:25:00.000Z', feedbackEligibleAt: '2020-01-01T17:55:00.000Z', expectedDinerIds: ['ava'] }] } as never)
+    state.leftoverLots.push(...Array.from({ length: 500 }, (_, index) => ({ id: `lot-${index}`, sourcePlanId: 'plan', sourceSlotId: 'slot', sourceMealId: 'tacos', dinnerCoverage: 'one' as const, active: false })))
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
+    fireEvent.change(screen.getByLabelText('Leftover coverage'), { target: { value: 'one' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
+
+    expect(screen.getByRole('status')).toHaveTextContent('Leftover storage is full.')
+    const saved = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    expect(saved.outcomes).toEqual([])
+    expect(saved.leftoverLots).toHaveLength(500)
   })
 
   it('reopens dismissed feedback with the dinner-time diner snapshot and preserves the neutral reason', () => {
