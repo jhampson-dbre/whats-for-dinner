@@ -1,0 +1,13 @@
+.shell { max-width: 42rem; margin: 4rem auto; padding: 0 1rem; }
+.actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
+.actions label { display: grid; gap: .25rem; }
+section { margin: 2rem 0; }
+.meal-list { display: grid; gap: 1rem; padding: 0; list-style: none; }
+.meal-list > li { padding: 1rem; border: 1px solid #c8c6bd; border-radius: .5rem; }
+.meal-list label { display: grid; gap: .25rem; margin-bottom: .75rem; }
+.meal-list label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: .5rem; }
+.hint { color: #5d4217; }
+.recipe-import { display: grid; gap: .75rem; margin-top: .75rem; }
+.recipe-import fieldset { display: grid; gap: .5rem; }
+.weekly-plan-preview { padding: 1rem; border: 1px solid #c8c6bd; border-radius: .5rem; }
+.weekly-plan-preview small { color: #4b534c; }

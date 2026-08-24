@@ -14,6 +14,10 @@ planning or task-tracker mutation.
 3. Ask one high-value question at a time only when a material user decision is needed.
 4. Examine outcome, minimality, alternatives, system fit, failure/recovery behavior,
    security/data implications, delivery slices, dependencies, and testability.
+   For a user-visible workflow whose state changes over time, trace one representative
+   lifecycle through setup, normal use, a pre-completion change, completion, and a
+   post-completion correction. Resolve interactions among in-scope outcomes rather than
+   handing off a known unsupported transition as a boundary.
 5. Compare the preferred approach with at least one materially simpler end-to-end
    option. Add state, schemas, dependencies, validators, roles, or gates only for a
    named outcome or material risk.
