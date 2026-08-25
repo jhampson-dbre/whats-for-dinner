@@ -1611,16 +1611,17 @@ describe('cooking outcomes', () => {
     expect(outcome).not.toHaveProperty('dinnerReadyAt')
   })
 
-  it('does not offer timing-unknown recovery for a future dinner', () => {
-    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-08-17T18:00:00.000Z'))
+  it('uses the device-local date to limit timing-unknown recovery', () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-08-18T01:00:00.000Z'))
     const state = createEmptyAppState()
-    state.meals.push({ id: 'soup', name: 'Soup', active: true })
-    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'future', date: '2026-08-18', mealId: 'soup' }] } as never)
+    state.meals.push({ id: 'today', name: 'Today soup', active: true }, { id: 'future', name: 'Tomorrow soup', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'today', date: '2026-08-17', mealId: 'today' }, { id: 'future', date: '2026-08-18', mealId: 'future' }] } as never)
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
     render(<App />)
-    expect(screen.queryByRole('button', { name: 'Record dinner without timing Soup' })).not.toBeInTheDocument()
-    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[0]).not.toHaveProperty('dinnerReadyAt')
+    expect(screen.getByRole('button', { name: 'Record dinner without timing Today soup' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Record dinner without timing Tomorrow soup' })).not.toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[1]).not.toHaveProperty('dinnerReadyAt')
   })
 
   it('does not save dinner-covering feedback when leftover history is full', () => {
