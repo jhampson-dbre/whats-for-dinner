@@ -1585,6 +1585,44 @@ describe('cooking outcomes', () => {
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes).toEqual([expect.any(Object), expect.objectContaining({ correctionOfOutcomeId: expect.any(String), activeEffortMinutes: 12, leftoverCoverage: 'some' })])
   })
 
+  it('records a cooked dinner without timing, unlocks planned leftovers, and omits elapsed feedback evidence', () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-08-17T18:00:00.000Z'))
+    const state = createEmptyAppState()
+    state.household.diners.push({ id: 'ava', name: 'Ava', active: true })
+    state.meals.push({ id: 'soup', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'soup' }, { id: 'dependent', date: '2026-08-18', mealId: 'soup', leftoverFromSlotId: 'source' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    const view = render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Record dinner without timing Soup' }))
+    const saved = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
+    expect(saved.plans[0].slots[0]).toMatchObject({ dinnerReadyAt: '2026-08-17T18:00:00.000Z', feedbackEligibleAt: '2026-08-17T18:30:00.000Z', expectedDinerIds: ['ava'] })
+    expect(saved.plans[0].slots[0]).not.toHaveProperty('cookingStartedAt')
+    expect(screen.getByRole('button', { name: 'Dinner’s ready Soup' })).toBeEnabled()
+
+    vi.setSystemTime(new Date('2026-08-17T18:31:00.000Z'))
+    view.unmount()
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
+    fireEvent.change(screen.getByLabelText('Feedback for Ava'), { target: { value: 'accepted' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
+    const outcome = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes[0]
+    expect(outcome).not.toHaveProperty('cookingStartedAt')
+    expect(outcome).not.toHaveProperty('dinnerReadyAt')
+  })
+
+  it('does not offer timing-unknown recovery for a future dinner', () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-08-17T18:00:00.000Z'))
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'soup', name: 'Soup', active: true })
+    state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'future', date: '2026-08-18', mealId: 'soup' }] } as never)
+    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
+
+    render(<App />)
+    expect(screen.queryByRole('button', { name: 'Record dinner without timing Soup' })).not.toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[0]).not.toHaveProperty('dinnerReadyAt')
+  })
+
   it('does not save dinner-covering feedback when leftover history is full', () => {
     const state = createEmptyAppState()
     state.household.diners.push({ id: 'ava', name: 'Ava', active: true })

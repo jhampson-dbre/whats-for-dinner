@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createEmptyAppState, importAppState, loadAppState, APP_STATE_STORAGE_KEY } from './storage'
-import { appStateV2Schema, appStateV3Schema } from './schema'
+import { appStateV1Schema, appStateV2Schema, appStateV3Schema, appStateV4Schema } from './schema'
 
 describe('V1 state validation', () => {
   it('rejects an explicit leftover-serving outcome outside a leftover consumer slot', () => {
@@ -158,7 +158,7 @@ describe('V1 state validation', () => {
     const state = createEmptyAppState()
     state.meals.push({ id: 'meal-1', name: 'Tacos', active: true })
     state.plans.push({ id: 'plan-1', slots: [{ id: 'slot-1', date: '2026-08-17', mealId: 'meal-1', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }] } as never)
-    expect(() => importAppState(JSON.stringify(state))).toThrow()
+    expect(appStateV3Schema.safeParse({ ...state, schemaVersion: 3 }).success).toBe(false)
     state.plans[0].slots[0] = { ...state.plans[0].slots[0], cookingStartedAt: '2026-08-17T18:30:00.000Z' } as never
     expect(() => importAppState(JSON.stringify(state))).toThrow()
     state.plans[0].slots[0] = { ...state.plans[0].slots[0], cookingStartedAt: '2026-08-17T17:30:00.000Z' } as never
@@ -167,6 +167,17 @@ describe('V1 state validation', () => {
     state.outcomes = []
     state.plans[0].slots[0] = { id: 'takeout', date: '2026-08-18', dinnerReadyAt: '2026-08-18T18:00:00.000Z' } as never
     expect(importAppState(JSON.stringify(state))).toEqual(state)
+  })
+
+  it('allows V4 cooked dinners recorded without timing but keeps older imports strict', () => {
+    const state = createEmptyAppState()
+    state.meals.push({ id: 'meal-1', name: 'Tacos', active: true })
+    state.plans.push({ id: 'plan-1', slots: [{ id: 'slot-1', date: '2026-08-17', mealId: 'meal-1', dinnerReadyAt: '2026-08-17T18:00:00.000Z' }] } as never)
+
+    expect(appStateV4Schema.safeParse(state).success).toBe(true)
+    expect(appStateV1Schema.safeParse({ ...state, schemaVersion: 1 }).success).toBe(false)
+    expect(appStateV3Schema.safeParse({ ...state, schemaVersion: 3 }).success).toBe(false)
+    expect(appStateV2Schema.safeParse({ ...state, schemaVersion: 2 }).success).toBe(false)
   })
 
   it('allows a non-adjacent planned-leftover dinner to be ready without cooking', () => {
