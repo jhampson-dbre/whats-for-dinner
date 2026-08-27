@@ -1552,7 +1552,7 @@ describe('cooking outcomes', () => {
     expect(mealLearning(outcomes, 'soup')).toMatchObject({ confidence: 'Learning', relevant: 1 })
   })
 
-  it('persists cooking timestamps and only opens delayed feedback after a reload', () => {
+  it('persists cooking timestamps and offers user-invoked feedback immediately', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-17T17:00:00.000Z'))
     const state = createEmptyAppState()
@@ -1566,7 +1566,9 @@ describe('cooking outcomes', () => {
     vi.setSystemTime(new Date('2026-08-17T17:25:00.000Z'))
     fireEvent.click(screen.getByRole('button', { name: 'Dinner’s ready Tacos' }))
     expect(screen.queryByRole('heading', { name: 'Dinner feedback' })).not.toBeInTheDocument()
-    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[0]).toMatchObject({ cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T17:25:00.000Z', feedbackEligibleAt: '2026-08-17T17:55:00.000Z', expectedDinerIds: ['ava'] })
+    expect(screen.getByRole('status')).toHaveTextContent('Dinner recorded. Add feedback when you’re ready.')
+    expect(screen.getByRole('button', { name: 'Add feedback' })).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').plans[0].slots[0]).toMatchObject({ cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T17:25:00.000Z', feedbackEligibleAt: '2026-08-17T17:25:00.000Z', expectedDinerIds: ['ava'] })
     first.unmount()
     vi.setSystemTime(new Date('2026-08-17T17:56:00.000Z'))
 
@@ -1585,7 +1587,7 @@ describe('cooking outcomes', () => {
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes).toEqual([expect.any(Object), expect.objectContaining({ correctionOfOutcomeId: expect.any(String), activeEffortMinutes: 12, leftoverCoverage: 'some' })])
   })
 
-  it('records a cooked dinner without timing, unlocks planned leftovers, and omits elapsed feedback evidence', () => {
+  it.each(['none', 'some'] as const)('records a cooked dinner without timing, immediately offers feedback, and repairs an uncovered planned leftover after %s feedback', (leftoverCoverage) => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-08-17T18:00:00.000Z'))
     const state = createEmptyAppState()
     state.household.diners.push({ id: 'ava', name: 'Ava', active: true })
@@ -1593,22 +1595,25 @@ describe('cooking outcomes', () => {
     state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'source', date: '2026-08-17', mealId: 'soup' }, { id: 'dependent', date: '2026-08-18', mealId: 'soup', leftoverFromSlotId: 'source' }] } as never)
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
 
-    const view = render(<App />)
+    render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Record dinner without timing Soup' }))
+    expect(screen.getByRole('status')).toHaveTextContent('Dinner recorded without timing. Add feedback when you’re ready.')
     const saved = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '')
-    expect(saved.plans[0].slots[0]).toMatchObject({ dinnerReadyAt: '2026-08-17T18:00:00.000Z', feedbackEligibleAt: '2026-08-17T18:30:00.000Z', expectedDinerIds: ['ava'] })
+    expect(saved.plans[0].slots[0]).toMatchObject({ dinnerReadyAt: '2026-08-17T18:00:00.000Z', feedbackEligibleAt: '2026-08-17T18:00:00.000Z', expectedDinerIds: ['ava'] })
     expect(saved.plans[0].slots[0]).not.toHaveProperty('cookingStartedAt')
     expect(screen.getByRole('button', { name: 'Dinner’s ready Soup' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Add feedback' })).toBeInTheDocument()
 
-    vi.setSystemTime(new Date('2026-08-17T18:31:00.000Z'))
-    view.unmount()
-    render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
     fireEvent.change(screen.getByLabelText('Feedback for Ava'), { target: { value: 'accepted' } })
+    if (leftoverCoverage === 'some') fireEvent.change(screen.getByLabelText('Leftover coverage'), { target: { value: leftoverCoverage } })
     fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
     const outcome = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes[0]
+    expect(outcome).toMatchObject({ leftoverCoverage })
     expect(outcome).not.toHaveProperty('cookingStartedAt')
     expect(outcome).not.toHaveProperty('dinnerReadyAt')
+    expect(screen.getByRole('status')).toHaveTextContent('Expected leftovers are insufficient. Choose and confirm the smallest repair.')
+    expect(screen.getByRole('button', { name: 'Remove leftover planning' })).toBeInTheDocument()
   })
 
   it('uses the device-local date to limit timing-unknown recovery', () => {
@@ -1657,17 +1662,12 @@ describe('cooking outcomes', () => {
     expect(JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes).toEqual([expect.objectContaining({ acceptance: 'neutral', personFeedback: [{ dinerId: 'ava', acceptance: 'neutral', neutralReason: 'not-hungry' }] })])
   })
 
-  it('hides early history feedback and keeps blank active effort unknown', () => {
+  it('offers feedback for a recorded dinner despite a future legacy eligibility timestamp', () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-08-17T17:30:00.000Z'))
     const state = createEmptyAppState()
     state.household.diners.push({ id: 'ava', name: 'Ava', active: true })
     state.meals.push({ id: 'tacos', name: 'Tacos', active: true })
     state.plans.push({ id: 'plan', confirmed: true, slots: [{ id: 'slot', date: '2026-08-17', mealId: 'tacos', cookingStartedAt: '2026-08-17T17:00:00.000Z', dinnerReadyAt: '2026-08-17T17:20:00.000Z', feedbackEligibleAt: '2026-08-17T18:00:00.000Z', feedbackDismissed: true, expectedDinerIds: ['ava'] }] } as never)
-    localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
-    const first = render(<App />)
-    expect(screen.queryByRole('button', { name: 'Add feedback' })).not.toBeInTheDocument()
-    first.unmount()
-    state.plans[0].slots[0].feedbackEligibleAt = '2026-08-17T17:00:00.000Z'
     localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(state))
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
@@ -1690,7 +1690,8 @@ describe('cooking outcomes', () => {
     vi.setSystemTime(new Date('2026-08-19T18:31:00.000Z'))
     view.unmount()
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Add feedback' }))
+    const linkedDinner = screen.getAllByRole('listitem').find((item) => item.textContent?.includes('(planned leftovers)'))!
+    fireEvent.click(within(linkedDinner).getByRole('button', { name: 'Add feedback' }))
     expect(screen.queryByLabelText('Active effort minutes')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Save feedback' }))
     const outcome = JSON.parse(localStorage.getItem(APP_STATE_STORAGE_KEY) ?? '').outcomes[0]
