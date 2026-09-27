@@ -1,6 +1,12 @@
 # Household access setup
 
-Apply `supabase/migrations/20260927000000_household_access.sql` to the Supabase project before deploying the API. Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` as server-only Vercel environment variables. Never use a `VITE_` prefix for the secret key. Enable email confirmation in Supabase Auth and keep anonymous sign-in disabled. Sign-up can stay open: a verified account has no household until it redeems an invitation.
+## Local Supabase development
+
+Install a [Docker-compatible container runtime](https://supabase.com/docs/guides/local-development), then run `npm ci`, `npx supabase start`, and `npx supabase db reset --local` from the repository root. The CLI and `supabase/config.toml` are committed with the timestamped migrations so a fresh local database can be rebuilt from source. Local Auth requires email confirmation; use the local mail testing UI printed by `supabase start`. Run `npx supabase stop` when finished. The local stack and its default credentials are for development only.
+
+On a machine without a container runtime, `npx vitest run tests/households.test.ts tests/household-migration.test.ts` exercises the API and migration in embedded PostgreSQL, but does not exercise Supabase Auth or PostgREST integration. Do not use `supabase db push` or `supabase db reset --linked` as a substitute for local verification.
+
+After local reset passes, preview migrations for the intended remote project with `npx supabase db push --dry-run`; apply them with `npx supabase db push` only during an authorized deployment. Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` as server-only Vercel environment variables. Never use a `VITE_` prefix for the secret key. Enable email confirmation in Supabase Auth and keep anonymous sign-in disabled. Sign-up can stay open: a verified account has no household until it redeems an invitation.
 
 An operator with the server secret can issue a creator link locally:
 
