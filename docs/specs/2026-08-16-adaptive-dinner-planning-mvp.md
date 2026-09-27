@@ -324,10 +324,12 @@ unchanged and are visibly marked **Manual quantity adjustment**.
 
 **Start cooking** and **Dinner's ready** are the only MVP source of observed elapsed
 time. Missing either action leaves timing unknown. Active effort is a separate signal.
+For a cooked dinner on today or an earlier date, **Record dinner without timing**
+records completion and the expected diners without inventing a cooking start.
 
-**Dinner's ready** begins eating and must not immediately ask for feedback. Outcome
-feedback becomes eligible after a delay and opens on the next app visit. It remains
-dismissible and recoverable.
+**Dinner's ready** and **Record dinner without timing** make **Add feedback** available
+immediately without opening or requiring it. Feedback remains dismissible and
+recoverable from the plan history.
 
 A household dinner is unsuccessful when an expected diner refuses the shared meal,
 even if other diners eat it. Positive person-level acceptance is still retained.
@@ -454,11 +456,11 @@ elapsed-time, or active-effort observation. Constrained-night effort uses correc
 outcomes for the selected recipe version; only name-only meals fall back to meal-level
 evidence.
 
-The relevant plan slot persists `cookingStartedAt`, `dinnerReadyAt`,
-`feedbackEligibleAt`, and feedback dismissal state. **Dinner's ready** makes feedback
-eligible 30 minutes later. The next full page load after eligibility may open the
-prompt; dismissing it leaves the outcome available from the plan history rather than
-discarding it.
+The relevant plan slot persists `dinnerReadyAt`, `feedbackEligibleAt`, and feedback
+dismissal state. It persists `cookingStartedAt` only when cooking was timed. Both
+completion actions store immediate feedback eligibility, and completed slots with a
+legacy future `feedbackEligibleAt` still offer **Add feedback**. Feedback opens only
+when the user chooses it; dismissing it leaves the outcome available from plan history.
 
 The storage and migration contract is:
 
