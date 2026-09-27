@@ -67,10 +67,10 @@ describe('household record migrations', () => {
       ]
       expect((await write([household, actor, 4, 'duplicate', 'e'.repeat(64), JSON.stringify(duplicate), '[]'])).status).toBe(400)
       const linked = [
-        { kind: 'meal', id: 'm2', value: { id: 'm2', name: 'Soup', active: true, recipeIds: ['r2'] } },
+        { kind: 'meal', id: 'm2', value: { id: 'm2', name: 'Soup', active: true, plannedLeftoverDinner: true, recipeIds: ['r2'] } },
         { kind: 'recipe', id: 'r2', value: { id: 'r2', title: 'Soup recipe' } },
         { kind: 'plan', id: 'p2', value: { id: 'p2' } },
-        { kind: 'slot', id: 's2', planId: 'p2', position: 0, value: { id: 's2', date: '2026-09-28', mealId: 'm2', recipeId: 'r2', dinnerReadyAt: '2026-09-28T18:00:00Z' } },
+        { kind: 'slot', id: 's2', planId: 'p2', position: 1, value: { id: 's2', date: '2026-09-28', mealId: 'm2', recipeId: 'r2', dinnerReadyAt: '2026-09-28T18:00:00Z' } },
       ]
       const linkedRefs = [
         { sourceKind: 'meal', sourceId: 'm2', targetKind: 'recipe', targetId: 'r2' },
@@ -79,6 +79,8 @@ describe('household record migrations', () => {
         { sourceKind: 'slot', sourceId: 's2', targetKind: 'recipe', targetId: 'r2' },
       ]
       expect((await write([household, actor, 4, 'linked', 'f'.repeat(64), JSON.stringify(linked), JSON.stringify(linkedRefs)])).revision).toBe(5)
+      await db.query(`insert into public.household_records(household_id,kind,record_id,plan_id,position,value)
+        values ($1,'slot','s_source','p2',0,'{"id":"s_source","date":"2026-09-27","mealId":"m2"}'::jsonb)`, [household])
       const check = async (changes: unknown[], revision = 5) => (await db.query<{ result: { status: number } }>(
         'select public.check_household_record_changes($1::uuid,$2::uuid,$3::bigint,$4::jsonb) result', [household, actor, revision, JSON.stringify(changes)],
       )).rows[0].result
@@ -92,7 +94,7 @@ describe('household record migrations', () => {
         { sourceKind: 'outcome', sourceId: 'o2', targetKind: 'recipe', targetId: 'r2' },
       ]
       expect((await write([household, actor, 5, 'linked-outcome', 'a'.repeat(64), JSON.stringify(linkedOutcome), JSON.stringify(outcomeRefs)])).revision).toBe(6)
-      const takeout = { kind: 'slot', id: 's2', planId: 'p2', position: 0, value: { id: 's2', date: '2026-09-28', dinnerReadyAt: '2026-09-28T18:00:00Z' } }
+      const takeout = { kind: 'slot', id: 's2', planId: 'p2', position: 1, value: { id: 's2', date: '2026-09-28', dinnerReadyAt: '2026-09-28T18:00:00Z' } }
       expect((await check([takeout], 6)).status).toBe(400)
       expect((await check([takeout, { kind: 'outcome', id: 'o3', value: { id: 'o3', correctionOfOutcomeId: 'o2', planId: 'p2', planSlotId: 's2' } }], 6)).status).toBe(200)
       const effort = (id: string, minutes?: number, correctionOfOutcomeId?: string) => [{ kind: 'outcome', id, value: { id, mealId: 'm2', recipeId: 'r2', planSlotId: 's2', ...(minutes !== undefined && { activeEffortMinutes: minutes }), ...(correctionOfOutcomeId && { correctionOfOutcomeId }) } }]
@@ -121,7 +123,7 @@ describe('household record migrations', () => {
       const activeEffort = [{ kind: 'outcome', id: 'o7', value: { id: 'o7', mealId: 'm2', recipeId: 'r2', planSlotId: 's2', activeEffortMinutes: 20 } }]
       const activeRefs = [{ sourceKind: 'outcome', sourceId: 'o7', targetKind: 'slot', targetId: 's2' }]
       expect((await write([household, actor, 10, 'slot-effort', 'f'.repeat(64), JSON.stringify(activeEffort), JSON.stringify(activeRefs)])).revision).toBe(11)
-      const makeLeftover = { kind: 'slot', id: 's2', planId: 'p2', position: 0, value: { id: 's2', date: '2026-09-28', mealId: 'm2', recipeId: 'r2', dinnerReadyAt: '2026-09-28T18:00:00Z', leftoverFromSlotId: 's1' } }
+      const makeLeftover = { kind: 'slot', id: 's2', planId: 'p2', position: 1, value: { id: 's2', date: '2026-09-28', mealId: 'm2', recipeId: 'r2', dinnerReadyAt: '2026-09-28T18:00:00Z', leftoverFromSlotId: 's_source' } }
       expect((await check([makeLeftover], 11)).status).toBe(400)
       expect((await check([makeLeftover, { kind: 'outcome', id: 'o8', value: { id: 'o8', mealId: 'm2', recipeId: 'r2', planSlotId: 's2', correctionOfOutcomeId: 'o7' } }], 11)).status).toBe(200)
 
@@ -175,9 +177,26 @@ describe('household record migrations', () => {
       expect(indexedLinks).toBe(1)
       const secondReserve = [{ ...target, value: { ...target.value, leftoverFromSlotId: undefined, leftoverLotIds: ['unreferenced_lot'] } }]
       expect((await write([household, actor, 12, 'direct-second-reserve', 'e'.repeat(64), JSON.stringify(secondReserve), '[]'])).status).toBe(400)
+      const proposed = (planned: boolean, targetDate: string, chained = false) => [
+        { kind: 'meal', id: 'guard_meal', value: { id: 'guard_meal', name: 'Guard meal', active: true, ...(planned && { plannedLeftoverDinner: true }) } },
+        { kind: 'plan', id: 'guard_plan', value: { id: 'guard_plan' } },
+        ...(chained ? [{ kind: 'slot', id: 'guard_anchor', planId: 'guard_plan', position: 0, value: { id: 'guard_anchor', date: '2026-09-26', mealId: 'guard_meal' } }] : []),
+        { kind: 'slot', id: 'guard_source', planId: 'guard_plan', position: 1, value: { id: 'guard_source', date: '2026-09-27', mealId: 'guard_meal', ...(chained && { leftoverFromSlotId: 'guard_anchor' }) } },
+        { kind: 'slot', id: 'guard_target', planId: 'guard_plan', position: 2, value: { id: 'guard_target', date: targetDate, mealId: 'guard_meal', leftoverFromSlotId: 'guard_source' } },
+      ]
+      expect((await write([household, actor, 12, 'unflagged-source', 'f'.repeat(64), JSON.stringify(proposed(false, '2026-09-28')), '[]'])).status).toBe(400)
+      expect((await write([household, actor, 12, 'same-date-source', 'a'.repeat(64), JSON.stringify(proposed(true, '2026-09-27')), '[]'])).status).toBe(400)
+      expect((await write([household, actor, 12, 'consumer-source', 'b'.repeat(64), JSON.stringify(proposed(true, '2026-09-28', true)), '[]'])).status).toBe(400)
+      expect((await write([household, actor, 12, 'valid-source', 'c'.repeat(64), JSON.stringify(proposed(true, '2026-09-28')), '[]'])).revision).toBe(13)
+      const existingSourceTarget = [{ kind: 'slot', id: 'existing_source_target', planId: 'p2', position: 2, value: { id: 'existing_source_target', date: '2026-09-29', mealId: 'm2', leftoverFromSlotId: 's_source' } }]
+      expect((await write([household, actor, 13, 'valid-existing-source', 'd'.repeat(64), JSON.stringify(existingSourceTarget), '[]'])).revision).toBe(14)
+      await db.query(`insert into public.household_records(household_id,kind,record_id,value)
+        values ($1,'leftover-lot','source_change_lot','{"id":"source_change_lot","sourceMealId":"m2","dinnerCoverage":"one"}'::jsonb)`, [household])
+      const changedSource = [{ kind: 'slot', id: 's_source', planId: 'p2', position: 0, value: { id: 's_source', date: '2026-09-27', mealId: 'm2', leftoverLotIds: ['source_change_lot'] } }]
+      expect((await write([household, actor, 14, 'source-becomes-consumer', 'e'.repeat(64), JSON.stringify(changedSource), '[]'])).status).toBe(400)
       await db.query('delete from public.household_memberships where household_id=$1 and user_id=$2', [household, actor])
       expect((await write(args)).status).toBe(403)
-      expect((await affected(12)).status).toBe(403)
+      expect((await affected(14)).status).toBe(403)
     } finally {
       await db.close()
     }

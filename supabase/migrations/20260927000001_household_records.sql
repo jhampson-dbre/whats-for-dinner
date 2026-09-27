@@ -264,6 +264,9 @@ declare
   changed jsonb;
   previous_value jsonb;
   reference_id text;
+  source_value jsonb;
+  source_plan_id text;
+  source_meal jsonb;
 begin
   select revision into current_revision from public.households where id = p_household_id for share;
   if not found then return jsonb_build_object('status', 403); end if;
@@ -375,6 +378,29 @@ begin
 
     if changed->>'kind' = 'slot' then
       reference_id := changed->'value'->>'leftoverFromSlotId';
+      if reference_id is not null then
+        select candidate->'value', candidate->>'planId' into source_value, source_plan_id
+        from jsonb_array_elements(p_changes) candidate
+        where candidate->>'kind' = 'slot' and candidate->>'id' = reference_id;
+        if not found then
+          select value, plan_id into source_value, source_plan_id from public.household_records
+          where household_id = p_household_id and kind = 'slot' and record_id = reference_id;
+        end if;
+        select candidate->'value' into source_meal from jsonb_array_elements(p_changes) candidate
+        where candidate->>'kind' = 'meal' and candidate->>'id' = source_value->>'mealId';
+        if not found then
+          select value into source_meal from public.household_records
+          where household_id = p_household_id and kind = 'meal' and record_id = source_value->>'mealId';
+        end if;
+        if source_value is null or source_plan_id is distinct from changed->>'planId'
+          or source_value->>'mealId' is distinct from changed->'value'->>'mealId'
+          or source_value->>'date' is null or changed->'value'->>'date' is null
+          or source_value->>'date' >= changed->'value'->>'date'
+          or source_value ? 'leftoverFromSlotId'
+          or jsonb_array_length(coalesce(source_value->'leftoverLotIds', '[]'::jsonb)) > 0
+          or source_meal->>'plannedLeftoverDinner' is distinct from 'true'
+        then return jsonb_build_object('status', 400); end if;
+      end if;
       if reference_id is not null and (
         exists (select 1 from jsonb_array_elements(p_changes) other
           where other->>'kind' = 'slot' and other->>'id' <> changed->>'id'
@@ -401,6 +427,26 @@ begin
                 where other->>'kind' = 'slot' and other->>'id' = ref.source_id))
         then return jsonb_build_object('status', 400); end if;
       end loop;
+      if exists (
+        select 1 from public.household_record_refs ref
+        join public.household_records target on target.household_id = ref.household_id
+          and target.kind = 'slot' and target.record_id = ref.source_id
+        left join public.household_records meal on meal.household_id = ref.household_id
+          and meal.kind = 'meal' and meal.record_id = changed->'value'->>'mealId'
+        where ref.household_id = p_household_id and ref.target_kind = 'slot'
+          and ref.target_id = changed->>'id' and ref.source_kind = 'slot'
+          and not exists (select 1 from jsonb_array_elements(p_changes) candidate
+            where candidate->>'kind' = 'slot' and candidate->>'id' = target.record_id)
+          and (changed->'value'->>'mealId' is distinct from target.value->>'mealId'
+            or changed->>'planId' is distinct from target.plan_id
+            or changed->'value'->>'date' >= target.value->>'date'
+            or changed->'value' ? 'leftoverFromSlotId'
+            or jsonb_array_length(coalesce(changed->'value'->'leftoverLotIds', '[]'::jsonb)) > 0
+            or coalesce((select candidate->'value'->>'plannedLeftoverDinner'
+                from jsonb_array_elements(p_changes) candidate
+                where candidate->>'kind' = 'meal' and candidate->>'id' = changed->'value'->>'mealId'),
+              meal.value->>'plannedLeftoverDinner') is distinct from 'true')
+      ) then return jsonb_build_object('status', 400); end if;
     end if;
 
     if changed->>'kind' = 'outcome' and changed->'value' ? 'correctionOfOutcomeId' then
