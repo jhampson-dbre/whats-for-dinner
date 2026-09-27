@@ -165,6 +165,44 @@ function validHousehold(rows: Row[]): boolean {
   }).success
 }
 
+function validationRows(rows: Row[], changes: Change[]): Row[] {
+  const changed = new Set(changes.map(keyOf))
+  const known = new Set(rows.map(keyOf))
+  const adaptations = new Set(changes.filter((row) => row.kind === 'repair').flatMap((row) => ids([object(row.value).adaptationId])))
+  const filtered = (value: Record<string, unknown>, field: string, target: Kind) =>
+    value[field] === undefined ? undefined : ids(value[field]).filter((id) => known.has(`${target}:${id}`))
+  const ref = (value: Record<string, unknown>, field: string, target: Kind) =>
+    known.has(`${target}:${value[field]}`) ? value[field] : undefined
+  return rows.map((row) => {
+    if (changed.has(keyOf(row)) || row.kind === 'settings') return row
+    const value = object(row.value)
+    let shallow: Record<string, unknown> = value
+    if (row.kind === 'meal') shallow = { ...value,
+      recipeIds: filtered(value, 'recipeIds', 'recipe'), recoveryMealIds: filtered(value, 'recoveryMealIds', 'meal'),
+      adaptations: Array.isArray(value.adaptations) ? value.adaptations.filter((entry) => adaptations.has(String(object(entry).id)))
+        .map((entry) => { const item = object(entry); return { ...item, mealId: ref(item, 'mealId', 'meal'), recipeId: ref(item, 'recipeId', 'recipe'), dinerId: undefined } }) : undefined,
+    }
+    else if (row.kind === 'recipe') shallow = { ...value, mealId: ref(value, 'mealId', 'meal') }
+    else if (row.kind === 'plan') shallow = { ...value, variants: undefined,
+      shopping: value.shopping ? { ...object(value.shopping), skippedIncompleteMealIds: [] } : undefined }
+    else if (row.kind === 'slot') shallow = { ...value,
+      mealId: ref(value, 'mealId', 'meal'), recipeId: ref(value, 'recipeId', 'recipe'),
+      leftoverFromSlotId: ref(value, 'leftoverFromSlotId', 'slot'),
+      leftoverLotIds: filtered(value, 'leftoverLotIds', 'leftover-lot'),
+      leftoverDependencyIds: filtered(value, 'leftoverDependencyIds', 'leftover-lot'),
+    }
+    else if (row.kind === 'outcome') shallow = { ...value,
+      mealId: ref(value, 'mealId', 'meal'), recipeId: ref(value, 'recipeId', 'recipe'),
+      correctionOfOutcomeId: ref(value, 'correctionOfOutcomeId', 'outcome'), personFeedback: undefined,
+    }
+    else if (row.kind === 'leftover-lot') shallow = { ...value,
+      sourcePlanId: ref(value, 'sourcePlanId', 'plan'), sourceSlotId: ref(value, 'sourceSlotId', 'slot'),
+      sourceMealId: ref(value, 'sourceMealId', 'meal'),
+    }
+    return { ...row, value: shallow }
+  })
+}
+
 type RpcResult = { status: number; revision?: number; records?: Row[]; nextCursor?: number | null }
 
 export default {
@@ -259,6 +297,7 @@ export default {
     const seenDirect = new Set(changes.map(keyOf))
     const seenIncoming = new Set<string>()
     const seenPlans = new Set<string>()
+    const queuedSlots = new Set<string>()
     const queue = (row: Change) => {
       if (row.kind === 'plan') planIds.add(row.id)
       if (row.planId) planIds.add(row.planId)
@@ -278,6 +317,7 @@ export default {
     for (const row of loaded.values()) queue(row)
     for (const row of changes) {
       queue(row)
+      if (row.kind === 'recipe') incoming.set(`recipe:${row.id}:meal`, { kind: 'recipe', id: row.id, sourceKinds: ['meal'] })
     }
     while (direct.size || incoming.size || planIds.size) {
       const keys = [...direct.values()].filter((target) => !seenDirect.has(keyOf(target))).slice(0, 100)
@@ -290,7 +330,10 @@ export default {
       const prior = new Set(loaded.keys())
       const status = await readAffected(keys, dependents.map(([, value]) => value), plans)
       if (status !== 200) return fail(status)
-      for (const [id, row] of loaded) if (!prior.has(id)) queue(row)
+      for (const [id, row] of loaded) if (!prior.has(id) && row.kind === 'slot' && !queuedSlots.has(id)) {
+        queuedSlots.add(id)
+        queue(row)
+      }
     }
 
     if (changes.some((row) => !historyAllowed(loaded.get(keyOf(row)), row, changes, loaded))) return fail(400)
@@ -302,9 +345,13 @@ export default {
       if (index < 0) rows.push({ ...row, seq: ++newSeq })
       else rows[index] = { ...row, seq: rows[index].seq }
     }
-    if (!validHousehold(rows)) return fail(400)
-
     const current = new Map(rows.map((row) => [keyOf(row), row]))
+    if (changes.some((row) => row.kind === 'meal' && ids(object(row.value).recipeIds).some((id) => {
+      const owner = object(current.get(`recipe:${id}`)?.value).mealId
+      return owner !== undefined && owner !== row.id
+    }))) return fail(400)
+    if (!validHousehold(validationRows(rows, changes))) return fail(400)
+
     const newlyConfirmed = new Set(changes.filter((row) => row.kind === 'plan' && object(row.value).confirmed === true
       && object(loaded.get(keyOf(row))?.value).confirmed !== true).map((row) => row.id))
     const selection = (value: Record<string, unknown>) => [value.date, value.mealId, value.recipeId, value.leftoverFromSlotId, value.leftoverLotIds]

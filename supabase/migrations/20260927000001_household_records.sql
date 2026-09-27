@@ -166,6 +166,8 @@ begin
       and ref.source_kind in (select jsonb_array_elements_text(requested->'sourceKinds'))
     join public.household_records record on record.household_id = ref.household_id
       and record.kind = ref.source_kind and record.record_id = ref.source_id
+      and (requested->>'kind' <> 'recipe' or ref.source_kind <> 'meal'
+        or coalesce(record.value->'recipeIds', '[]'::jsonb) ? (requested->>'id'))
     union
     select record.seq from public.household_records record
     where record.household_id = p_household_id and record.kind = 'slot' and record.plan_id = any(p_plan_ids)
@@ -189,6 +191,8 @@ begin
         and ref.source_kind in (select jsonb_array_elements_text(requested->'sourceKinds'))
       join public.household_records record on record.household_id = ref.household_id
         and record.kind = ref.source_kind and record.record_id = ref.source_id
+        and (requested->>'kind' <> 'recipe' or ref.source_kind <> 'meal'
+          or coalesce(record.value->'recipeIds', '[]'::jsonb) ? (requested->>'id'))
       union
       select record.seq from public.household_records record
       where record.household_id = p_household_id and record.kind = 'slot' and record.plan_id = any(p_plan_ids)
@@ -316,10 +320,34 @@ begin
           and ref.source_id <> changed->>'id'
           and not exists (select 1 from jsonb_array_elements(p_changes) c where c->>'kind' = 'meal' and c->>'id' = ref.source_id
             and not coalesce(c->'value'->'recipeIds', '[]'::jsonb) ? reference_id)) then return jsonb_build_object('status', 400); end if;
+        if exists (select 1 from jsonb_array_elements(p_changes) recipe
+            where recipe->>'kind' = 'recipe' and recipe->>'id' = reference_id
+              and recipe->'value' ? 'mealId' and recipe->'value'->>'mealId' <> changed->>'id')
+          or exists (select 1 from public.household_records recipe
+            where recipe.household_id = p_household_id and recipe.kind = 'recipe' and recipe.record_id = reference_id
+              and recipe.value ? 'mealId' and recipe.value->>'mealId' <> changed->>'id'
+              and not exists (select 1 from jsonb_array_elements(p_changes) updated
+                where updated->>'kind' = 'recipe' and updated->>'id' = reference_id))
+        then return jsonb_build_object('status', 400); end if;
       end loop;
     end if;
 
     if changed->>'kind' = 'recipe' then
+      if changed->'value' ? 'mealId' and (
+        exists (select 1 from public.household_record_refs ref
+          join public.household_records owner on owner.household_id = ref.household_id
+            and owner.kind = 'meal' and owner.record_id = ref.source_id
+          where ref.household_id = p_household_id and ref.target_kind = 'recipe'
+            and ref.target_id = changed->>'id' and ref.source_kind = 'meal'
+            and owner.record_id <> changed->'value'->>'mealId'
+            and coalesce(owner.value->'recipeIds', '[]'::jsonb) ? (changed->>'id')
+            and not exists (select 1 from jsonb_array_elements(p_changes) updated
+              where updated->>'kind' = 'meal' and updated->>'id' = owner.record_id
+                and not coalesce(updated->'value'->'recipeIds', '[]'::jsonb) ? (changed->>'id')))
+        or exists (select 1 from jsonb_array_elements(p_changes) updated
+          where updated->>'kind' = 'meal' and updated->>'id' <> changed->'value'->>'mealId'
+            and coalesce(updated->'value'->'recipeIds', '[]'::jsonb) ? (changed->>'id'))
+      ) then return jsonb_build_object('status', 400); end if;
       if exists (
         select 1 from public.household_record_refs link
         join public.household_records slot on slot.household_id = link.household_id
@@ -577,6 +605,12 @@ begin
   for reference in select value from jsonb_array_elements(p_refs) with ordinality as entry(value, ordinal) order by ordinal loop
     insert into public.household_record_refs (household_id, source_kind, source_id, target_kind, target_id)
     values (p_household_id, reference->>'sourceKind', reference->>'sourceId', reference->>'targetKind', reference->>'targetId')
+    on conflict do nothing;
+  end loop;
+  for changed in select value from jsonb_array_elements(p_changes) as entry(value) where value->>'kind' = 'meal' loop
+    insert into public.household_record_refs (household_id, source_kind, source_id, target_kind, target_id)
+    select p_household_id, 'meal', changed->>'id', 'recipe', recipe_id
+    from jsonb_array_elements_text(coalesce(changed->'value'->'recipeIds', '[]'::jsonb)) recipe_id
     on conflict do nothing;
   end loop;
   for changed in select value from jsonb_array_elements(p_changes) as entry(value) where value->>'kind' = 'slot' loop

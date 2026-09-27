@@ -146,6 +146,82 @@ describe('record API', () => {
     expect(returned).toBeLessThanOrEqual(3)
   })
 
+  it('rejects assigning a listed recipe to another meal through indexed owner lookup', async () => {
+    const records = [
+      { seq: 1, kind: 'recipe', id: 'r1', value: { id: 'r1', title: 'Soup' } },
+      { seq: 2, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Owner', active: true, recipeIds: ['r1'] } },
+      { seq: 3, kind: 'meal', id: 'm2', value: { id: 'm2', name: 'Other', active: true } },
+    ]
+    rpc.mockImplementation((name: string, args: { p_keys?: Array<{ kind: string; id: string }>; p_incoming?: Array<{ kind: string; id: string; sourceKinds: string[] }> }) => {
+      if (name === 'read_household_dependencies') return Promise.resolve({ data: { status: 200, revision: 1,
+        records: records.filter((row) => args.p_keys?.some((key) => key.kind === row.kind && key.id === row.id)
+          || args.p_incoming?.some((key) => key.kind === 'recipe' && key.id === 'r1' && key.sourceKinds.includes('meal') && row.id === 'm1')),
+        nextCursor: null }, error: null })
+      return Promise.resolve({ data: { status: 200, revision: 2 }, error: null })
+    })
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 1, idempotencyKey: 'dual-owner', changes: [{ kind: 'recipe', id: 'r1', value: { id: 'r1', title: 'Soup', mealId: 'm2' } }],
+    }) }))
+    expect(response.status).toBe(400)
+    expect(rpc.mock.calls.some(([name, args]) => name === 'read_household_dependencies' && args.p_incoming?.some((key: { kind: string }) => key.kind === 'recipe'))).toBe(true)
+  })
+
+  it('rejects listing a recipe already assigned to another meal without traversing its owner', async () => {
+    mockAffected([
+      { seq: 1, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Owner', active: true } },
+      { seq: 2, kind: 'recipe', id: 'r1', value: { id: 'r1', title: 'Soup', mealId: 'm2' } },
+    ])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'reverse-owner', changes: [{ kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Owner', active: true, recipeIds: ['r1'] } }],
+    }) }))
+    expect(response.status).toBe(400)
+    expect(rpc.mock.calls.some(([name]) => name === 'write_household_records')).toBe(false)
+  })
+
+  it('keeps a long recovery chain out of a simple meal edit while rejecting a missing direct edge', async () => {
+    const records = Array.from({ length: 200 }, (_, index) => ({ seq: index + 1, kind: 'meal', id: `chain_${index}`, value: {
+      id: `chain_${index}`, name: `Meal ${index}`, active: true, ...(index < 199 && { recoveryMealIds: [`chain_${index + 1}`] }),
+    } }))
+    let returned = 0
+    rpc.mockImplementation((name: string, args: { p_keys?: Array<{ kind: string; id: string }> }) => {
+      if (name === 'read_household_dependencies') {
+        const selected = records.filter((row) => args.p_keys?.some((key) => key.kind === row.kind && key.id === row.id))
+        returned += selected.length
+        return Promise.resolve({ data: { status: 200, revision: 1, records: selected, nextCursor: null }, error: null })
+      }
+      return Promise.resolve({ data: { status: 200, revision: 2 }, error: null })
+    })
+    const change = (recoveryMealIds: string[]) => new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 1, idempotencyKey: recoveryMealIds[0], changes: [{ kind: 'meal', id: 'chain_0', value: { id: 'chain_0', name: 'Edited', active: true, recoveryMealIds } }],
+    }) })
+    expect((await handler.fetch(change(['chain_1']))).status).toBe(200)
+    expect(rpc.mock.calls.filter(([name]) => name === 'read_household_dependencies').length).toBeLessThanOrEqual(2)
+    expect(returned).toBeLessThanOrEqual(2)
+    expect((await handler.fetch(change(['missing']))).status).toBe(400)
+  })
+
+  it('checks a correction against its direct predecessor without reading the correction chain', async () => {
+    const records = Array.from({ length: 200 }, (_, index) => ({ seq: index + 1, kind: 'outcome', id: `outcome_${index}`, value: {
+      id: `outcome_${index}`, ...(index > 0 && { correctionOfOutcomeId: `outcome_${index - 1}` }),
+    } }))
+    let returned = 0
+    rpc.mockImplementation((name: string, args: { p_keys?: Array<{ kind: string; id: string }> }) => {
+      if (name === 'read_household_dependencies') {
+        const selected = records.filter((row) => args.p_keys?.some((key) => key.kind === row.kind && key.id === row.id))
+        returned += selected.length
+        return Promise.resolve({ data: { status: 200, revision: 1, records: selected, nextCursor: null }, error: null })
+      }
+      return Promise.resolve({ data: { status: 200, revision: 2, totals: [], contributions: [] }, error: null })
+    })
+    const request = (prior: string) => new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 1, idempotencyKey: prior, changes: [{ kind: 'outcome', id: 'outcome_200', value: { id: 'outcome_200', correctionOfOutcomeId: prior } }],
+    }) })
+    expect((await handler.fetch(request('outcome_199'))).status).toBe(200)
+    expect(rpc.mock.calls.filter(([name]) => name === 'read_household_dependencies').length).toBeLessThanOrEqual(2)
+    expect(returned).toBeLessThanOrEqual(1)
+    expect((await handler.fetch(request('missing'))).status).toBe(400)
+  })
+
   it('rejects direct confirmation of a meal marked unsafe', async () => {
     const existing = [{ seq: 1, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, safetyReview: 'rejected' } }]
     rpc.mockImplementation((name: string, args: { p_keys?: Array<{ kind: string; id: string }> }) => name === 'read_household_dependencies'

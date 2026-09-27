@@ -8,6 +8,63 @@ const household = '31a95af5-89dc-4858-9546-5c039852f63a'
 const actor = '11111111-1111-4111-8111-111111111111'
 
 describe('household record migrations', () => {
+  it('rejects assigning a listed recipe to another meal in the CAS write', async () => {
+    const db = new PGlite()
+    try {
+      await db.exec('create role anon; create role authenticated; create role service_role; create schema auth; create table auth.users (id uuid primary key)')
+      await db.exec(await migration('20260927000000_household_access.sql'))
+      await db.exec(await migration('20260927000001_household_records.sql'))
+      await db.query('insert into auth.users(id) values ($1)', [actor])
+      await db.query('insert into public.households(id) values ($1)', [household])
+      await db.query("insert into public.household_memberships(household_id,user_id,email,role) values ($1,$2,'cook@example.com','creator')", [household, actor])
+      await db.query(`insert into public.household_records(household_id,kind,record_id,value) values
+        ($1,'meal','m1','{"id":"m1","name":"Owner","active":true,"recipeIds":["r1"]}'::jsonb),
+        ($1,'meal','m2','{"id":"m2","name":"Other","active":true}'::jsonb),
+        ($1,'recipe','r1','{"id":"r1","title":"Soup"}'::jsonb),
+        ($1,'recipe','r2','{"id":"r2","title":"Other soup","mealId":"m2"}'::jsonb)`, [household])
+      await db.query(`insert into public.household_record_refs(household_id,source_kind,source_id,target_kind,target_id)
+        values ($1,'meal','m1','recipe','r1')`, [household])
+      const changes = [{ kind: 'recipe', id: 'r1', value: { id: 'r1', title: 'Soup', mealId: 'm2' } }]
+      const result = (await db.query<{ result: { status: number } }>(
+        'select public.write_household_records($1::uuid,$2::uuid,0,$3,$4,$5::jsonb,$6::jsonb) result',
+        [household, actor, 'dual-owner', 'a'.repeat(64), JSON.stringify(changes), '[]'],
+      )).rows[0].result
+      expect(result.status).toBe(400)
+      const reverse = [{ kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Owner', active: true, recipeIds: ['r1', 'r2'] } }]
+      const reverseResult = (await db.query<{ result: { status: number } }>(
+        'select public.write_household_records($1::uuid,$2::uuid,0,$3,$4,$5::jsonb,$6::jsonb) result',
+        [household, actor, 'reverse-owner', 'b'.repeat(64), JSON.stringify(reverse), '[]'],
+      )).rows[0].result
+      expect(reverseResult.status).toBe(400)
+      const transfer = [
+        { kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Owner', active: true, recipeIds: [] } },
+        { kind: 'recipe', id: 'r1', value: { id: 'r1', title: 'Soup', mealId: 'm2' } },
+      ]
+      const transferResult = (await db.query<{ result: { status: number; revision: number } }>(
+        'select public.write_household_records($1::uuid,$2::uuid,0,$3,$4,$5::jsonb,$6::jsonb) result',
+        [household, actor, 'transfer-owner', 'c'.repeat(64), JSON.stringify(transfer), '[]'],
+      )).rows[0].result
+      expect(transferResult).toEqual({ status: 200, revision: 1 })
+      const noRefs = [
+        { kind: 'meal', id: 'm3', value: { id: 'm3', name: 'Direct owner', active: true, recipeIds: ['r3'] } },
+        { kind: 'recipe', id: 'r3', value: { id: 'r3', title: 'Direct recipe' } },
+      ]
+      const bootstrap = (await db.query<{ result: { status: number; revision: number } }>(
+        'select public.write_household_records($1::uuid,$2::uuid,1,$3,$4,$5::jsonb,$6::jsonb) result',
+        [household, actor, 'direct-owner', 'd'.repeat(64), JSON.stringify(noRefs), '[]'],
+      )).rows[0].result
+      expect(bootstrap).toEqual({ status: 200, revision: 2 })
+      const bypass = [{ kind: 'recipe', id: 'r3', value: { id: 'r3', title: 'Direct recipe', mealId: 'm2' } }]
+      const bypassResult = (await db.query<{ result: { status: number } }>(
+        'select public.write_household_records($1::uuid,$2::uuid,2,$3,$4,$5::jsonb,$6::jsonb) result',
+        [household, actor, 'direct-dual-owner', 'e'.repeat(64), JSON.stringify(bypass), '[]'],
+      )).rows[0].result
+      expect(bypassResult.status).toBe(400)
+    } finally {
+      await db.close()
+    }
+  })
+
   it('keeps pages pinned and serializes CAS writes with membership checked on replay', async () => {
     const db = new PGlite()
     try {
