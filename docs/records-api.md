@@ -1,0 +1,13 @@
+# Household records API
+
+`/api/records` requires a bearer access token for a verified, nonanonymous Supabase user. Every page and write, including an idempotent replay, checks current household membership inside its database transaction. The service key stays on the server. The tables and RPCs are denied to `anon` and `authenticated` and granted to `service_role`.
+
+## Records
+
+The kinds are `settings` (one record with ID `settings`), `meal`, `recipe`, `plan`, `slot`, `shopping-item`, `repair`, `outcome`, and `leftover-lot`. Values use the V4 shapes in `src/state/schema.ts`. A `plan` value contains its header fields and optional shopping metadata (`confirmedAt`, `skippedIncompleteMealIds`, `partial`); slots, shopping items, and repair revisions are separate records with `planId` and zero-based `position` beside `value`. Shopping item values require a stable `id`. The API assembles these records to apply the V4 reference and safety checks. It removes the V4 whole-file caps on meals, recipes, plans, leftover lots, outcomes, plan repair revisions, and shopping items. Per-record shape limits remain.
+
+`GET /api/records?householdId=<uuid>&kind=<kind>&limit=100` returns `{revision,records,nextCursor}`. Limit is 1–100. Continue with `revision=<returned revision>&after=<nextCursor>` until `nextCursor` is null. A changed household revision returns 409; restart from the first page. `id=<record ID>` looks up one record and returns `{revision,record}` or 404, under the same revision check. Records have `seq`, `kind`, `id`, `planId`, `position`, and `value`.
+
+`POST /api/records` accepts `{householdId,expectedRevision,idempotencyKey,changes}`. Each of 1–100 changes is `{kind,id,value}` plus `planId` and `position` for a plan child. Changes are upserts. The server validates each record and the resulting household state, then one SQL transaction checks the revision and applies all changes. Success returns `{revision}`. The same key, actor, operation, and payload digest returns the original revision, even after another write; reuse with different payload returns 409. A different actor may use the same key. To preserve production history, this version has no hard-delete operation. Inactive or corrected records stay as records.
+
+Records are limited to 32 KiB each and a request to 256 KiB. Errors are JSON `{error}` with 400 for malformed/schema/reference/safety failures, 401 for missing or invalid JWT, 403 for unverified user or absent membership, 404 for an absent ID lookup, 409 for stale page/write or idempotency-key conflict, 413 for byte limits, and 500 for backend failures. No response is cached.
