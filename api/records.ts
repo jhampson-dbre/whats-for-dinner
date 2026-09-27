@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import { appStateV4Schema } from '../src/state/schema'
@@ -24,17 +25,132 @@ const schemas = {
   'leftover-lot': root.leftoverLots.element,
 } as const
 const change = z.object({
-  kind, id: recordId, planId: recordId.optional(), position: z.number().int().min(0).optional(), value: z.unknown(),
+  kind, id: recordId, planId: recordId.optional(), position: z.number().int().min(0).max(2147483647).optional(), value: z.unknown(),
 }).strict()
 const write = z.object({ householdId: uuid, expectedRevision: z.number().int().min(0), idempotencyKey: z.string().min(1).max(128), changes: z.array(change).min(1).max(100) }).strict()
 type Change = z.infer<typeof change>
 type Row = Change & { seq: number }
+type Key = { kind: string; id: string }
+type Incoming = Key & { sourceKinds: Kind[] }
+type Ref = { sourceKind: Kind; sourceId: string; targetKind: string; targetId: string }
 const children = new Set<Kind>(['slot', 'shopping-item', 'repair'])
 const maxRecordBytes = 32 * 1024
 const maxChangesetBytes = 256 * 1024
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'cache-control': 'no-store' } })
 const fail = (status: number) => json({ error: ({ 400: 'Invalid request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not found', 409: 'Revision conflict', 413: 'Payload too large' } as Record<number, string>)[status] ?? 'Server error' }, status)
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8')
+const keyOf = ({ kind, id }: Key) => `${kind}:${id}`
+const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {}
+const ids = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+
+function refs(row: Change): Ref[] {
+  const value = object(row.value)
+  const found: Ref[] = []
+  const add = (targetKind: string, targetId: unknown) => {
+    if (typeof targetId === 'string') found.push({ sourceKind: row.kind, sourceId: row.id, targetKind, targetId })
+  }
+  const many = (targetKind: string, values: unknown) => ids(values).forEach((id) => add(targetKind, id))
+  if (row.planId) add('plan', row.planId)
+  if (row.kind === 'meal') {
+    many('recipe', value.recipeIds); many('meal', value.recoveryMealIds)
+    for (const adaptation of (value.adaptations as unknown[] | undefined) ?? []) {
+      const entry = object(adaptation)
+      add('adaptation', entry.id); add('meal', entry.mealId); add('recipe', entry.recipeId); add('diner', entry.dinerId)
+    }
+  } else if (row.kind === 'recipe') add('meal', value.mealId)
+  else if (row.kind === 'plan') {
+    for (const variant of (value.variants as unknown[] | undefined) ?? []) {
+      const entry = object(variant)
+      add('variant', entry.id); add('meal', entry.mealId); add('recipe', entry.recipeId)
+    }
+    many('meal', object(value.shopping).skippedIncompleteMealIds)
+  } else if (row.kind === 'slot') {
+    add('meal', value.mealId); add('recipe', value.recipeId); add('slot', value.leftoverFromSlotId)
+    many('leftover-lot', value.leftoverLotIds); many('leftover-lot', value.leftoverDependencyIds)
+    if (ids(value.expectedDinerIds).length) add('settings', 'settings')
+    many('diner', value.expectedDinerIds)
+  } else if (row.kind === 'shopping-item') {
+    many('meal', value.mealIds); many('slot', value.sourceSlotIds)
+  } else if (row.kind === 'repair') {
+    add('slot', value.slotId); add('leftover-lot', value.leftoverLotId); add('adaptation', value.adaptationId)
+  } else if (row.kind === 'outcome') {
+    add('plan', value.planId); add('slot', value.planSlotId); add('meal', value.mealId)
+    add('recipe', value.recipeId); add('outcome', value.correctionOfOutcomeId)
+    for (const feedback of (value.personFeedback as unknown[] | undefined) ?? []) add('diner', object(feedback).dinerId)
+    if (Array.isArray(value.personFeedback) && value.personFeedback.length) add('settings', 'settings')
+  } else if (row.kind === 'leftover-lot') {
+    add('plan', value.sourcePlanId); add('slot', value.sourceSlotId); add('meal', value.sourceMealId)
+  }
+  return [...new Map(found.map((ref) => [`${ref.targetKind}:${ref.targetId}`, ref])).values()]
+}
+
+function incomingFor(old: Row | undefined, next: Change): Incoming[] {
+  const before = object(old?.value)
+  const after = object(next.value)
+  const incoming: Incoming[] = []
+  const add = (kind: string, id: string, sourceKinds: Kind[]) => incoming.push({ kind, id, sourceKinds })
+  if (next.kind === 'slot' && old && (!isDeepStrictEqual(
+    [before.mealId, before.recipeId, before.leftoverFromSlotId, before.leftoverLotIds, before.leftoverDependencyIds, before.date],
+    [after.mealId, after.recipeId, after.leftoverFromSlotId, after.leftoverLotIds, after.leftoverDependencyIds, after.date],
+  ) || old.planId !== next.planId)) add('slot', next.id, ['slot', 'shopping-item', 'repair', 'outcome', 'leftover-lot'])
+  if (next.kind === 'meal') {
+    for (const id of new Set([...ids(before.recipeIds), ...ids(after.recipeIds)])) add('recipe', id, ['meal'])
+    for (const id of new Set([...(before.adaptations as { id: string }[] | undefined) ?? [], ...(after.adaptations as { id: string }[] | undefined) ?? []].map((value) => value.id))) add('adaptation', id, ['meal', 'repair'])
+    if (old && JSON.stringify(before.recipeIds) !== JSON.stringify(after.recipeIds)) add('meal', next.id, ['recipe', 'slot'])
+  }
+  if (next.kind === 'recipe' && old && before.mealId !== after.mealId) add('recipe', next.id, ['meal', 'slot'])
+  if (next.kind === 'plan') for (const id of new Set([...(before.variants as { id: string }[] | undefined) ?? [], ...(after.variants as { id: string }[] | undefined) ?? []].map((value) => value.id))) add('variant', id, ['plan'])
+  if (next.kind === 'outcome' && typeof after.correctionOfOutcomeId === 'string') add('outcome', after.correctionOfOutcomeId, ['outcome'])
+  if (next.kind === 'settings' && old) {
+    const nextDiners = new Set(((after.diners as { id: string }[] | undefined) ?? []).map((value) => value.id))
+    for (const diner of (before.diners as { id: string }[] | undefined) ?? []) if (!nextDiners.has(diner.id)) add('diner', diner.id, ['meal', 'slot', 'outcome'])
+  }
+  return incoming
+}
+
+function historyAllowed(old: Row | undefined, next: Change, changes: Change[], loaded: Map<string, Row>): boolean {
+  if (next.kind === 'shopping-item' && !old && object(loaded.get(`plan:${next.planId}`)?.value).shopping) return false
+  if (!old) return true
+  if (children.has(next.kind) && (old.planId !== next.planId || old.position !== next.position)) return false
+  if (next.kind === 'outcome' || next.kind === 'repair') return false
+  const before = object(old.value)
+  const after = object(next.value)
+  if (next.kind === 'plan') {
+    if (before.shopping && !isDeepStrictEqual(before.shopping, after.shopping)) return false
+    if (before.confirmed === true && after.confirmed !== true) return false
+    if (before.confirmed === true && !isDeepStrictEqual({ ...before, shopping: undefined }, { ...after, shopping: undefined })) return false
+  }
+  if (next.kind === 'shopping-item') return false
+  if (next.kind === 'leftover-lot' && (!isDeepStrictEqual({ ...before, active: undefined }, { ...after, active: undefined }) || (before.active === false && after.active !== false))) return false
+  if (next.kind === 'slot') {
+    if (before.feedbackDismissed === true && after.feedbackDismissed !== true) return false
+    if (before.cookingStartedAt && !after.cookingStartedAt && !changes.some((row) => row.kind === 'repair' && row.planId === next.planId && object(row.value).slotId === next.id)) return false
+    const plan = object(loaded.get(`plan:${next.planId}`)?.value)
+    const selection = (value: Record<string, unknown>) => [value.mealId, value.recipeId, value.leftoverFromSlotId, value.leftoverLotIds, value.leftoverDependencyIds]
+    if (plan.confirmed && !isDeepStrictEqual(selection(before), selection(after))
+      && !changes.some((row) => row.kind === 'repair' && row.planId === next.planId && object(row.value).slotId === next.id)) return false
+  }
+  if (next.kind === 'slot' && before.dinnerReadyAt) {
+    if (after.dinnerReadyAt !== before.dinnerReadyAt || after.date !== before.date) return false
+    const justDismissed = isDeepStrictEqual({ ...before, feedbackDismissed: after.feedbackDismissed }, after)
+    const stable = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value).filter(([field]) =>
+      !['mealId', 'recipeId', 'cookingStartedAt', 'leftoverFromSlotId', 'leftoverLotIds', 'leftoverDependencyIds', 'feedbackDismissed'].includes(field)))
+    const correction = !after.mealId && !after.recipeId && !after.cookingStartedAt
+      && !after.leftoverFromSlotId && !after.leftoverLotIds && !after.leftoverDependencyIds
+      && isDeepStrictEqual(stable(before), stable(after))
+      && changes.some((row) => row.kind === 'repair' && row.planId === next.planId && object(row.value).slotId === next.id && object(row.value).kind === 'takeout')
+      && [...loaded.values()].filter((row) => row.kind === 'outcome' && object(row.value).planSlotId === next.id)
+        .filter((row, _, outcomes) => !outcomes.some((candidate) => object(candidate.value).correctionOfOutcomeId === row.id))
+        .every((row) => changes.some((candidate) => {
+          const value = object(candidate.value)
+          return candidate.kind === 'outcome' && value.correctionOfOutcomeId === row.id
+            && !value.mealId && !value.recipeId && !value.cookingStartedAt && value.activeEffortMinutes === undefined
+            && !value.leftoverCoverage && !value.leftoverServing
+        }))
+    if (!justDismissed && !correction) return false
+  }
+  return true
+}
 
 function validChange(row: Change): boolean {
   if (children.has(row.kind) !== Boolean(row.planId) || (children.has(row.kind) !== (row.position !== undefined))) return false
@@ -106,22 +222,20 @@ export default {
       const after = Number(params.get('after') ?? 0)
       const limit = Number(params.get('limit') ?? 100)
       const id = params.get('id')
-      if (!householdId.success || !selected.success || (revision !== null && (!Number.isSafeInteger(revision) || revision < 0)) || !Number.isSafeInteger(after) || after < 0 || (after > 0 && revision === null) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100 || (id !== null && !recordId.safeParse(id).success)) return fail(400)
+      if (!householdId.success || !selected.success || (revision !== null && (!Number.isSafeInteger(revision) || revision < 0)) || !Number.isSafeInteger(after) || after < 0 || (after > 0 && revision === null) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100 || (id !== null && (!recordId.safeParse(id).success || after > 0))) return fail(400)
+      if (id !== null) {
+        const { data, error } = await db.rpc('read_household_dependencies', {
+          p_household_id: householdId.data, p_user_id: user.id, p_revision: revision,
+          p_keys: [{ kind: selected.data, id }], p_incoming: [], p_plan_ids: [], p_after: 0, p_limit: 1,
+        })
+        if (error) return fail(500)
+        const result = data as RpcResult
+        if (result.status !== 200) return fail(result.status)
+        return result.records?.[0] ? json({ revision: result.revision, record: result.records[0] }) : fail(404)
+      }
       const result = await readPage(householdId.data, selected.data, revision, after, limit)
       if (!result) return fail(500)
       if (result.status !== 200) return fail(result.status)
-      if (id !== null) {
-        // A single record lookup still uses the authorized, revision-pinned read path.
-        let page = result
-        while (true) {
-          const found = page.records?.find((row) => row.id === id)
-          if (found) return json({ revision: page.revision, record: found })
-          if (page.nextCursor == null) return fail(404)
-          page = await readPage(householdId.data, selected.data, result.revision ?? null, page.nextCursor, 100) as RpcResult
-          if (!page) return fail(500)
-          if (page.status !== 200) return fail(page.status)
-        }
-      }
       return json({ revision: result.revision, records: result.records, nextCursor: result.nextCursor })
     }
     if (request.method !== 'POST') return fail(405)
@@ -138,26 +252,75 @@ export default {
     if (new Set(changes.map((row) => `${row.kind}:${row.id}`)).size !== changes.length) return fail(400)
 
     const digest = createHash('sha256').update(JSON.stringify({ expectedRevision, changes })).digest('hex')
-    const writeParams = { p_household_id: householdId, p_user_id: user.id, p_expected_revision: expectedRevision, p_key: idempotencyKey, p_digest: digest, p_changes: changes }
-    const rows: Row[] = []
-    for (const selected of kinds) {
+    const writeParams = { p_household_id: householdId, p_user_id: user.id, p_expected_revision: expectedRevision, p_key: idempotencyKey, p_digest: digest, p_changes: changes, p_refs: changes.flatMap(refs) }
+    const loaded = new Map<string, Row>()
+    const readAffected = async (keys: Key[], incoming: Incoming[], planIds: string[]): Promise<number> => {
       let after = 0
       while (true) {
-        const page = await readPage(householdId, selected, expectedRevision, after, 100)
-        if (!page) return fail(500)
-        if (page.status === 409) {
-          // A stale retry can still be a successful replay. The write RPC checks that without applying changes.
-          const replay = await db.rpc('write_household_records', writeParams)
-          return replay.error ? fail(500) : (replay.data as RpcResult).status === 200
-            ? json({ revision: (replay.data as RpcResult).revision }) : fail((replay.data as RpcResult).status)
-        }
-        if (page.status !== 200) return fail(page.status)
-        rows.push(...(page.records ?? []))
-        if (page.nextCursor == null) break
+        const { data, error } = await db.rpc('read_household_dependencies', {
+          p_household_id: householdId, p_user_id: user.id, p_revision: expectedRevision,
+          p_keys: keys, p_incoming: incoming, p_plan_ids: planIds, p_after: after, p_limit: 100,
+        })
+        if (error) return 500
+        const page = data as RpcResult
+        if (page.status !== 200) return page.status
+        for (const row of page.records ?? []) loaded.set(keyOf(row), row)
+        if (page.nextCursor == null) return 200
         after = page.nextCursor
       }
     }
-    let newSeq = Math.max(0, ...rows.map((row) => row.seq))
+    const first = await readAffected(changes.map(({ kind, id }) => ({ kind, id })), [], [])
+    if (first === 409) {
+      const replay = await db.rpc('write_household_records', writeParams)
+      return replay.error ? fail(500) : (replay.data as RpcResult).status === 200
+        ? json({ revision: (replay.data as RpcResult).revision }) : fail((replay.data as RpcResult).status)
+    }
+    if (first !== 200) return fail(first)
+
+    const direct = new Map<string, Key>()
+    const incoming = new Map<string, Incoming>()
+    const planIds = new Set<string>()
+    const seenDirect = new Set(changes.map(keyOf))
+    const seenIncoming = new Set<string>()
+    const seenPlans = new Set<string>()
+    const queue = (row: Change) => {
+      if (row.kind === 'plan') planIds.add(row.id)
+      if (row.planId) planIds.add(row.planId)
+      for (const ref of refs(row)) {
+        if (kind.safeParse(ref.targetKind).success) {
+          const target = { kind: ref.targetKind, id: ref.targetId }
+          if (!seenDirect.has(keyOf(target))) direct.set(keyOf(target), target)
+          if (ref.targetKind === 'plan') planIds.add(ref.targetId)
+        } else if (ref.targetKind === 'diner') direct.set('settings:settings', { kind: 'settings', id: 'settings' })
+        else if (ref.targetKind === 'adaptation') {
+          const target = { kind: 'adaptation', id: ref.targetId, sourceKinds: ['meal'] as Kind[] }
+          incoming.set(`${target.kind}:${target.id}:meal`, target)
+        }
+      }
+    }
+    for (const row of loaded.values()) queue(row)
+    for (const row of changes) {
+      queue(row)
+      for (const target of incomingFor(loaded.get(keyOf(row)), row)) incoming.set(`${target.kind}:${target.id}:${target.sourceKinds.join(',')}`, target)
+    }
+    while (direct.size || incoming.size || planIds.size) {
+      const keys = [...direct.values()].filter((target) => !seenDirect.has(keyOf(target))).slice(0, 100)
+      const dependents = [...incoming.entries()].filter(([id]) => !seenIncoming.has(id)).slice(0, 100)
+      const plans = [...planIds].filter((id) => !seenPlans.has(id)).slice(0, 100)
+      if (!keys.length && !dependents.length && !plans.length) break
+      keys.forEach((target) => { seenDirect.add(keyOf(target)); direct.delete(keyOf(target)) })
+      dependents.forEach(([id]) => { seenIncoming.add(id); incoming.delete(id) })
+      plans.forEach((id) => { seenPlans.add(id); planIds.delete(id) })
+      const prior = new Set(loaded.keys())
+      const status = await readAffected(keys, dependents.map(([, value]) => value), plans)
+      if (status !== 200) return fail(status)
+      for (const [id, row] of loaded) if (!prior.has(id)) queue(row)
+    }
+
+    if (changes.some((row) => !historyAllowed(loaded.get(keyOf(row)), row, changes, loaded))) return fail(400)
+
+    const rows = [...loaded.values()]
+    let newSeq = rows.reduce((maximum, row) => Math.max(maximum, row.seq), 0)
     for (const row of changes) {
       const index = rows.findIndex((current) => current.kind === row.kind && current.id === row.id)
       if (index < 0) rows.push({ ...row, seq: ++newSeq })

@@ -19,9 +19,9 @@ describe('household record migrations', () => {
       await db.query("insert into public.household_memberships(household_id,user_id,email,role) values ($1,$2,'cook@example.com','creator')", [household, actor])
 
       const changes = [{ kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true } }]
-      const args = [household, actor, 0, 'once', 'a'.repeat(64), JSON.stringify(changes)]
+      const args = [household, actor, 0, 'once', 'a'.repeat(64), JSON.stringify(changes), '[]']
       const write = async (values: unknown[]) => (await db.query<{ result: { status: number; revision: number } }>(
-        'select public.write_household_records($1::uuid,$2::uuid,$3::bigint,$4::text,$5::text,$6::jsonb) result', values,
+        'select public.write_household_records($1::uuid,$2::uuid,$3::bigint,$4::text,$5::text,$6::jsonb,$7::jsonb) result', values,
       )).rows[0].result
       const read = async (revision: number | null) => (await db.query<{ result: { status: number; revision?: number; records?: unknown[] } }>(
         "select public.read_household_records($1::uuid,$2::uuid,'meal',$3::bigint,0,100) result", [household, actor, revision],
@@ -29,24 +29,46 @@ describe('household record migrations', () => {
 
       expect(await write(args)).toEqual({ status: 200, revision: 1 })
       expect(await write(args)).toEqual({ status: 200, revision: 1 })
-      expect((await write([household, actor, 0, 'once', 'b'.repeat(64), JSON.stringify(changes)])).status).toBe(409)
+      expect((await write([household, actor, 0, 'once', 'b'.repeat(64), JSON.stringify(changes), '[]'])).status).toBe(409)
       expect((await read(1)).records).toHaveLength(1)
       expect((await read(0)).status).toBe(409)
-      expect((await write([household, actor, 0, 'different', 'b'.repeat(64), JSON.stringify(changes)])).status).toBe(409)
+      expect((await write([household, actor, 0, 'different', 'b'.repeat(64), JSON.stringify(changes), '[]'])).status).toBe(409)
       const invalidBatch = [
         { kind: 'meal', id: 'm2', value: { id: 'm2', name: 'Soup', active: true } },
         { kind: 'unknown', id: 'm3', value: { id: 'm3' } },
       ]
-      expect((await write([household, actor, 1, 'partial', 'c'.repeat(64), JSON.stringify(invalidBatch)])).status).toBe(400)
+      expect((await write([household, actor, 1, 'partial', 'c'.repeat(64), JSON.stringify(invalidBatch), '[]'])).status).toBe(400)
       expect((await read(1)).records).toHaveLength(1)
       const oversized = [{ kind: 'meal', id: 'large', value: { id: 'large', name: 'x'.repeat(32768), active: true } }]
-      expect((await write([household, actor, 1, 'large', 'd'.repeat(64), JSON.stringify(oversized)])).status).toBe(413)
+      expect((await write([household, actor, 1, 'large', 'd'.repeat(64), JSON.stringify(oversized), '[]'])).status).toBe(413)
       expect((await read(1)).records).toHaveLength(1)
-      expect((await write([household, actor, 1, 'null', 'e'.repeat(64), null])).status).toBe(400)
+      expect((await write([household, actor, 1, 'null', 'e'.repeat(64), null, '[]'])).status).toBe(400)
       expect((await read(1)).records).toHaveLength(1)
+      const recipe = [{ kind: 'recipe', id: 'r1', value: { id: 'r1', title: 'Pasta', mealId: 'm1' } }]
+      const refs = [{ sourceKind: 'recipe', sourceId: 'r1', targetKind: 'meal', targetId: 'm1' }]
+      expect((await write([household, actor, 1, 'recipe', 'f'.repeat(64), JSON.stringify(recipe), JSON.stringify(refs)])).revision).toBe(2)
+      const affected = async (revision: number) => (await db.query<{ result: { status: number; records?: Array<{ id: string }> } }>(
+        'select public.read_household_dependencies($1::uuid,$2::uuid,$3::bigint,$4::jsonb,$5::jsonb,$6::text[],0,100) result',
+        [household, actor, revision, '[]', JSON.stringify([{ kind: 'meal', id: 'm1', sourceKinds: ['recipe'] }]), []],
+      )).rows[0].result
+      expect((await affected(2)).records?.map((row) => row.id)).toEqual(['r1'])
+      expect((await affected(1)).status).toBe(409)
+      const outcome = [{ kind: 'outcome', id: 'o1', value: { id: 'o1', acceptance: 'accepted' } }]
+      expect(await write([household, actor, 2, 'outcome', 'a'.repeat(64), JSON.stringify(outcome), '[]'])).toEqual({ status: 200, revision: 3 })
+      const replacement = [{ kind: 'outcome', id: 'o1', value: { id: 'o1', acceptance: 'rejected' } }]
+      expect((await write([household, actor, 3, 'replace', 'b'.repeat(64), JSON.stringify(replacement), '[]'])).status).toBe(409)
+      const plan = [{ kind: 'plan', id: 'p1', value: { id: 'p1', confirmed: true, shopping: { confirmedAt: '2026-09-27T18:00:00Z', partial: false, skippedIncompleteMealIds: [] } } }]
+      expect((await write([household, actor, 3, 'plan', 'c'.repeat(64), JSON.stringify(plan), '[]'])).revision).toBe(4)
+      const lateItem = [{ kind: 'shopping-item', id: 'item1', planId: 'p1', position: 0, value: { id: 'item1', label: 'Milk', sourceLines: ['milk'], mealIds: [], perishable: true, availability: 'available' } }]
+      expect((await write([household, actor, 4, 'late-item', 'd'.repeat(64), JSON.stringify(lateItem), '[]'])).status).toBe(409)
+      const duplicate = [
+        { kind: 'meal', id: 'duplicate', value: { id: 'duplicate', name: 'First', active: true } },
+        { kind: 'meal', id: 'duplicate', value: { id: 'duplicate', name: 'Second', active: true } },
+      ]
+      expect((await write([household, actor, 4, 'duplicate', 'e'.repeat(64), JSON.stringify(duplicate), '[]'])).status).toBe(400)
       await db.query('delete from public.household_memberships where household_id=$1 and user_id=$2', [household, actor])
       expect((await write(args)).status).toBe(403)
-      expect((await read(1)).status).toBe(403)
+      expect((await affected(4)).status).toBe(403)
     } finally {
       await db.close()
     }
