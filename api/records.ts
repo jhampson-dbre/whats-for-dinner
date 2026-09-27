@@ -360,6 +360,13 @@ export default {
       else rows[index] = { ...row, seq: rows[index].seq }
     }
     const current = new Map(rows.map((row) => [keyOf(row), row]))
+    if (changes.some((row) => {
+      if (row.kind !== 'outcome') return false
+      const value = object(row.value)
+      const slot = object(current.get(`slot:${value.planSlotId}`)?.value)
+      const consumer = Boolean(slot.leftoverFromSlotId || ids(slot.leftoverLotIds).length)
+      return consumer ? value.leftoverServing !== true || value.activeEffortMinutes !== undefined : value.leftoverServing === true
+    })) return fail(400)
     if (changes.some((row) => row.kind === 'meal' && ids(object(row.value).recipeIds).some((id) => {
       const owner = object(current.get(`recipe:${id}`)?.value).mealId
       return owner !== undefined && owner !== row.id

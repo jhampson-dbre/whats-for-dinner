@@ -285,6 +285,22 @@ describe('record API', () => {
     expect(rpc.mock.calls.some(([name]) => name === 'read_household_effort')).toBe(true)
   })
 
+  it('requires an at-record-time leftover flag without effort for a leftover consumer outcome', async () => {
+    mockAffected([
+      { seq: 1, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Soup', active: true, plannedLeftoverDinner: true } },
+      { seq: 2, kind: 'plan', id: 'p1', value: { id: 'p1' } },
+      { seq: 3, kind: 'slot', id: 'source', planId: 'p1', position: 0, value: { id: 'source', date: '2026-09-26', mealId: 'm1' } },
+      { seq: 4, kind: 'slot', id: 'consumer', planId: 'p1', position: 1, value: { id: 'consumer', date: '2026-09-27', mealId: 'm1', leftoverFromSlotId: 'source' } },
+    ])
+    const send = (value: Record<string, unknown>) => handler.fetch(new Request('https://dinner.example/api/records', {
+      method: 'POST', headers, body: JSON.stringify({ householdId, expectedRevision: 0, idempotencyKey: JSON.stringify(value),
+        changes: [{ kind: 'outcome', id: 'o1', value: { id: 'o1', planId: 'p1', planSlotId: 'consumer', mealId: 'm1', ...value } }] }),
+    }))
+    expect((await send({})).status).toBe(400)
+    expect((await send({ leftoverServing: true, activeEffortMinutes: 20 })).status).toBe(400)
+    expect((await send({ leftoverServing: true })).status).toBe(200)
+  })
+
   it('rejects a confirmed recipe with an indexed unavailable ingredient', async () => {
     mockAffected([
       { seq: 1, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, recipeIds: ['r1'] } },

@@ -499,6 +499,21 @@ begin
         and ref.target_kind = 'outcome' and ref.target_id = changed->'value'->>'correctionOfOutcomeId'
         and ref.source_kind = 'outcome' and ref.source_id <> changed->>'id') then return jsonb_build_object('status', 400); end if;
     end if;
+    if changed->>'kind' = 'outcome' then
+      select candidate->'value' into source_value from jsonb_array_elements(p_changes) candidate
+      where candidate->>'kind' = 'slot' and candidate->>'id' = changed->'value'->>'planSlotId';
+      if not found then
+        select value into source_value from public.household_records
+        where household_id = p_household_id and kind = 'slot' and record_id = changed->'value'->>'planSlotId';
+      end if;
+      if coalesce(source_value ? 'leftoverFromSlotId', false)
+        or coalesce(jsonb_array_length(coalesce(source_value->'leftoverLotIds', '[]'::jsonb)), 0) > 0 then
+        if changed->'value'->>'leftoverServing' is distinct from 'true'
+          or changed->'value' ? 'activeEffortMinutes' then return jsonb_build_object('status', 400); end if;
+      elsif changed->'value'->>'leftoverServing' = 'true' then
+        return jsonb_build_object('status', 400);
+      end if;
+    end if;
 
     if changed->>'kind' = 'settings' and previous_value is not null then
       for reference_id in select diner->>'id' from jsonb_array_elements(previous_value->'diners') diner

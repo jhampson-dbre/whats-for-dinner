@@ -50,6 +50,12 @@ describe('household record migrations', () => {
         'select public.check_household_record_changes($1::uuid,$2::uuid,$3::bigint,$4::jsonb) result',
         [household, actor, 1, JSON.stringify(changes)],
       )).rows[0].result
+      const outcome = (slotId: string, extra: Record<string, unknown>) => [{ kind: 'outcome', id: 'effort_guard',
+        value: { id: 'effort_guard', planId: slotId === 'target_slot' ? 'target_plan' : 'source_plan', planSlotId: slotId, mealId: 'm1', ...extra } }]
+      expect((await check(outcome('target_slot', {}))).status).toBe(400)
+      expect((await check(outcome('target_slot', { leftoverServing: true, activeEffortMinutes: 20 }))).status).toBe(400)
+      expect((await check(outcome('target_slot', { leftoverServing: true }))).status).toBe(200)
+      expect((await check(outcome('source_slot', { leftoverServing: true }))).status).toBe(400)
       expect((await check([releasedTarget])).status).toBe(200)
       expect((await check([movedAfterSelection, releasedTarget])).status).toBe(200)
       await db.query(`insert into public.household_records(household_id,kind,record_id,value)
@@ -236,7 +242,7 @@ describe('household record migrations', () => {
       expect((await write([household, actor, 10, 'slot-effort', 'f'.repeat(64), JSON.stringify(activeEffort), JSON.stringify(activeRefs)])).revision).toBe(11)
       const makeLeftover = { kind: 'slot', id: 's2', planId: 'p2', position: 1, value: { id: 's2', date: '2026-09-28', mealId: 'm2', recipeId: 'r2', dinnerReadyAt: '2026-09-28T18:00:00Z', leftoverFromSlotId: 's_source' } }
       expect((await check([makeLeftover], 11)).status).toBe(400)
-      expect((await check([makeLeftover, { kind: 'outcome', id: 'o8', value: { id: 'o8', mealId: 'm2', recipeId: 'r2', planSlotId: 's2', correctionOfOutcomeId: 'o7' } }], 11)).status).toBe(200)
+      expect((await check([makeLeftover, { kind: 'outcome', id: 'o8', value: { id: 'o8', mealId: 'm2', recipeId: 'r2', planSlotId: 's2', correctionOfOutcomeId: 'o7', leftoverServing: true } }], 11)).status).toBe(200)
 
       // A retained history of dependent slots still produces one scalar guard result.
       await db.query(`insert into public.household_records(household_id,kind,record_id,value)

@@ -14,6 +14,11 @@ const fail = (message: string): never => { throw new Error(message) }
 if (!/^[a-fA-F0-9]{64}$/.test(process.env.BACKUP_KEY_HEX ?? '')) fail('BACKUP_KEY_HEX must contain 32 random bytes in hex')
 const key = Buffer.from(process.env.BACKUP_KEY_HEX!, 'hex')
 if (!process.env.DATABASE_URL || !process.env.BACKUP_OPERATOR) fail('DATABASE_URL and BACKUP_OPERATOR are required')
+const databaseUrl = new URL(process.env.DATABASE_URL!)
+if (!['postgres:', 'postgresql:'].includes(databaseUrl.protocol)) fail('Use a PostgreSQL URL')
+if (!['localhost', '127.0.0.1', '[::1]'].includes(databaseUrl.hostname)
+  && (databaseUrl.searchParams.getAll('sslmode').length !== 1 || databaseUrl.searchParams.get('sslmode') !== 'verify-full'))
+  fail('Nonlocal DATABASE_URL requires sslmode=verify-full with a trusted server certificate')
 const cipher = (plain: Buffer) => {
   const iv = randomBytes(12)
   const aes = createCipheriv('aes-256-gcm', key, iv)
@@ -25,12 +30,31 @@ const decipher = (sealed: Buffer) => {
   aes.setAuthTag(sealed.subarray(sealed.length - 16))
   return Buffer.concat([aes.update(sealed.subarray(12, -16)), aes.final()])
 }
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL })
+const client = new pg.Client({ connectionString: databaseUrl.toString() })
 const audit = async (action: string, household: string, digest: string | null, location: string | null = null) => client.query(
   'insert into public.household_backup_audit(action,household_id,archive_digest,operator_name,archive_location) values ($1,$2,$3,$4,$5)',
   [action, household, digest, process.env.BACKUP_OPERATOR, location],
 )
 const uuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)
+const expectedEffort = (rows: Row[]): Effort[] => {
+  const outcomes = rows.filter((row) => row.kind === 'outcome')
+  const corrected = new Set(outcomes.map((row) => (row.value as Record<string, unknown>).correctionOfOutcomeId).filter((id): id is string => typeof id === 'string'))
+  return outcomes.flatMap((row) => {
+    const value = row.value as Record<string, unknown>
+    return typeof value.mealId === 'string' && typeof value.activeEffortMinutes === 'number' && value.leftoverServing !== true
+      ? [{ outcomeId: row.id, mealId: value.mealId, recipeId: typeof value.recipeId === 'string' ? value.recipeId : '',
+        minutes: value.activeEffortMinutes, active: !corrected.has(row.id) }] : []
+  })
+}
+const assertEffort = (rows: Row[], actual: Effort[]) => {
+  const expected = new Map(expectedEffort(rows).map((item) => [item.outcomeId, item]))
+  if (actual.length !== expected.size || actual.some((item) => {
+    const match = expected.get(item.outcomeId)
+    expected.delete(item.outcomeId)
+    return !match || item.mealId !== match.mealId || item.recipeId !== match.recipeId
+      || item.minutes !== match.minutes || item.active !== match.active
+  })) fail('Missing or inconsistent effort contribution')
+}
 
 async function exportHousehold(household: string, destination: string) {
   if (!uuid(household)) fail('Invalid household ID')
@@ -46,6 +70,7 @@ async function exportHousehold(household: string, destination: string) {
     if (!recoveryRows.rows.some((row) => row.role === 'creator')) fail('Household has no creator')
     const manifest: Manifest = { version: 1, sourceHouseholdId: household, sourceRevision: Number(householdRow.rows[0].revision), count: 0, kinds: {}, chunks: [], effortCount: 0, effortChunks: [], recovery: recoveryRows.rows }
     if (!Number.isSafeInteger(manifest.sourceRevision) || manifest.sourceRevision < 0) fail('Revision exceeds archive format')
+    const outcomes: Row[] = []
     let after = '0'
     for (;;) {
       const page = await client.query('select seq::text,kind,record_id,plan_id,position,value from public.household_records where household_id=$1 and seq>$2 order by seq limit $3', [household, after, size])
@@ -58,16 +83,21 @@ async function exportHousehold(household: string, destination: string) {
       const file = `records-${String(manifest.chunks.length + 1).padStart(6, '0')}.ndjson.enc`
       await writeFile(join(temporary, file), cipher(plain), { flag: 'wx' })
       manifest.chunks.push({ file, count: rows.length, bytes: plain.length, sha256: sha(plain) })
-      for (const row of rows) manifest.kinds[row.kind] = (manifest.kinds[row.kind] ?? 0) + 1
+      for (const row of rows) {
+        manifest.kinds[row.kind] = (manifest.kinds[row.kind] ?? 0) + 1
+        if (row.kind === 'outcome') outcomes.push(row)
+      }
       manifest.count += rows.length
       after = page.rows.at(-1).seq
     }
     let afterOutcome = ''
+    const effort: Effort[] = []
     for (;;) {
       const page = await client.query(`select outcome_id,meal_id,recipe_id,minutes,active from public.household_effort_contributions
         where household_id=$1 and outcome_id>$2 order by outcome_id limit $3`, [household, afterOutcome, size])
       if (!page.rowCount) break
       const rows: Effort[] = page.rows.map((row) => ({ outcomeId: row.outcome_id, mealId: row.meal_id, recipeId: row.recipe_id, minutes: row.minutes, active: row.active }))
+      effort.push(...rows)
       const plain = Buffer.from(rows.map((row) => JSON.stringify(row)).join('\n') + '\n')
       if (plain.length > 4_000_000) fail('Effort chunk exceeds archive limit')
       const file = `effort-${String(manifest.effortChunks.length + 1).padStart(6, '0')}.ndjson.enc`
@@ -76,6 +106,7 @@ async function exportHousehold(household: string, destination: string) {
       manifest.effortCount += rows.length
       afterOutcome = page.rows.at(-1).outcome_id
     }
+    assertEffort(outcomes, effort)
     const inconsistentEffort = await client.query(`select exists (
       select 1 from (
         select meal_id,recipe_id,count(*) effort_count,sum(minutes) effort_sum
@@ -151,19 +182,13 @@ async function readArchive(directory: string) {
     if (lines.pop() !== '' || lines.length !== chunk.count) fail('Invalid effort NDJSON')
     for (const line of lines) {
       const item = JSON.parse(line) as Effort
-      const outcome = byKey.get(`outcome:${item.outcomeId}`)
-      const value = outcome?.value as Record<string, unknown> | undefined
-      if (!outcome || !Number.isSafeInteger(item.minutes) || item.minutes < 0 || typeof item.active !== 'boolean'
-        || item.mealId !== value?.mealId || item.recipeId !== (value?.recipeId ?? '') || item.minutes !== value?.activeEffortMinutes
+      if (!Number.isSafeInteger(item.minutes) || item.minutes < 0 || typeof item.active !== 'boolean'
         || effort.some((seen) => seen.outcomeId === item.outcomeId)) fail('Invalid effort contribution')
       effort.push(item)
     }
   }
   if (effort.length !== manifest.effortCount) fail('Effort count mismatch')
-  for (const row of rows.filter((item) => item.kind === 'outcome' && (item.value as Record<string, unknown>).correctionOfOutcomeId)) {
-    const target = (row.value as Record<string, unknown>).correctionOfOutcomeId
-    if (effort.some((item) => item.outcomeId === target && item.active)) fail('Corrected effort still active')
-  }
+  assertEffort(rows, effort)
   return { manifest, rows, effort, digest: sha(raw) }
 }
 
@@ -222,6 +247,10 @@ async function restoreHousehold(directory: string, target: string) {
     const stageCount = await client.query('select count(*)::integer count from public.household_restore_records where household_id=$1', [household])
     const effortCount = await client.query('select count(*)::integer count from public.household_restore_effort where household_id=$1', [household])
     if (stageCount.rows[0].count !== manifest.count || effortCount.rows[0].count !== manifest.effortCount) fail('Stage count mismatch')
+    const stagedEffort = await client.query(`select outcome_id,meal_id,recipe_id,minutes,active
+      from public.household_restore_effort where household_id=$1`, [household])
+    assertEffort(rows, stagedEffort.rows.map((item) => ({ outcomeId: item.outcome_id, mealId: item.meal_id,
+      recipeId: item.recipe_id, minutes: item.minutes, active: item.active })))
     // The locked household remains inaccessible: no membership or invitation exists until after commit.
     await client.query(`insert into public.household_records(household_id,kind,record_id,plan_id,position,value)
       select household_id,kind,record_id,plan_id,position,value from public.household_restore_records
