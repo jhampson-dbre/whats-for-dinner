@@ -336,6 +336,20 @@ export default {
       }
     }
 
+    // An existing lot is a direct target, so its source is read explicitly without
+    // walking every outgoing reference of every loaded record.
+    const lotSources = [...loaded.values()].filter((row) => row.kind === 'leftover-lot').flatMap((row) => {
+      const value = object(row.value)
+      return [
+        ...(typeof value.sourceSlotId === 'string' ? [{ kind: 'slot' as Kind, id: value.sourceSlotId }] : []),
+        ...(typeof value.sourcePlanId === 'string' ? [{ kind: 'plan' as Kind, id: value.sourcePlanId }] : []),
+      ]
+    }).filter((target) => !loaded.has(keyOf(target)))
+    if (lotSources.length) {
+      const status = await readAffected(lotSources, [], [])
+      if (status !== 200) return fail(status)
+    }
+
     if (changes.some((row) => !historyAllowed(loaded.get(keyOf(row)), row, changes, loaded))) return fail(400)
 
     const rows = [...loaded.values()]
@@ -436,7 +450,16 @@ export default {
         if (!linked && unavailable.has(`${slot.planId}:${value.mealId}:${value.recipeId ?? ''}`)) return fail(400)
         if (linked) {
           if (value.leftoverFromSlotId && !source) return fail(400)
-          if (lotIds.some((id) => { const lot = object(current.get(`leftover-lot:${id}`)?.value); return lot.active === false || lot.sourceMealId !== value.mealId || !['one', 'more-than-one'].includes(String(lot.dinnerCoverage)) })) return fail(400)
+          if (lotIds.length > 1 || lotIds.some((id) => {
+            const lot = object(current.get(`leftover-lot:${id}`)?.value)
+            const source = current.get(`slot:${lot.sourceSlotId}`)
+            const sourceSlot = object(source?.value)
+            return lot.active === false || lot.sourceMealId !== value.mealId
+              || !['one', 'more-than-one'].includes(String(lot.dinnerCoverage))
+              || (lot.sourcePlanId !== undefined && lot.sourcePlanId !== source?.planId)
+              || sourceSlot.mealId !== lot.sourceMealId
+              || typeof sourceSlot.date !== 'string' || sourceSlot.date >= String(value.date)
+          })) return fail(400)
           continue
         }
         const sameDate = exceptions.filter((entry) => entry.date === value.date)

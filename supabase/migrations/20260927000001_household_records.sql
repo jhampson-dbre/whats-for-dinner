@@ -269,6 +269,7 @@ declare
   previous_value jsonb;
   reference_id text;
   source_value jsonb;
+  lot_value jsonb;
   source_plan_id text;
   source_meal jsonb;
 begin
@@ -455,6 +456,22 @@ begin
                 where other->>'kind' = 'slot' and other->>'id' = ref.source_id))
         then return jsonb_build_object('status', 400); end if;
       end loop;
+      if previous_value->>'date' is distinct from changed->'value'->>'date' and exists (
+        select 1 from public.household_record_refs lot_source
+        join public.household_record_refs lot_consumer on lot_consumer.household_id = lot_source.household_id
+          and lot_consumer.target_kind = 'leftover-lot' and lot_consumer.target_id = lot_source.source_id
+          and lot_consumer.source_kind = 'slot'
+        join public.household_records consumer on consumer.household_id = lot_consumer.household_id
+          and consumer.kind = 'slot' and consumer.record_id = lot_consumer.source_id
+        where lot_source.household_id = p_household_id and lot_source.target_kind = 'slot'
+          and lot_source.target_id = changed->>'id' and lot_source.source_kind = 'leftover-lot'
+          and coalesce((select coalesce(updated->'value'->'leftoverLotIds', '[]'::jsonb) from jsonb_array_elements(p_changes) updated
+            where updated->>'kind' = 'slot' and updated->>'id' = consumer.record_id),
+            consumer.value->'leftoverLotIds', '[]'::jsonb) ? lot_source.source_id
+          and coalesce((select updated->'value'->>'date' from jsonb_array_elements(p_changes) updated
+            where updated->>'kind' = 'slot' and updated->>'id' = consumer.record_id),
+            consumer.value->>'date') <= changed->'value'->>'date'
+      ) then return jsonb_build_object('status', 400); end if;
       if exists (
         select 1 from public.household_record_refs ref
         join public.household_records target on target.household_id = ref.household_id
@@ -501,6 +518,49 @@ begin
           and ref.source_id <> changed->>'id') then return jsonb_build_object('status', 400); end if;
       end loop;
     end if;
+  end loop;
+  -- Validate changed consumers and persisted consumers when their plan is
+  -- confirmed. The latter closes the direct-RPC path around API selection checks.
+  for changed in
+    select entry.value from jsonb_array_elements(p_changes) entry(value)
+      where entry.value->>'kind' = 'slot'
+    union all
+    select jsonb_build_object('value', slot.value)
+    from jsonb_array_elements(p_changes) plan,
+      public.household_records slot
+    where plan->>'kind' = 'plan' and plan->'value'->>'confirmed' = 'true'
+      and slot.household_id = p_household_id and slot.kind = 'slot'
+      and slot.plan_id = plan->>'id'
+      and not exists (select 1 from jsonb_array_elements(p_changes) updated
+        where updated->>'kind' = 'slot' and updated->>'id' = slot.record_id)
+  loop
+    if jsonb_array_length(coalesce(changed->'value'->'leftoverLotIds', '[]'::jsonb)) > 1 then
+      return jsonb_build_object('status', 400);
+    end if;
+    for reference_id in select jsonb_array_elements_text(coalesce(changed->'value'->'leftoverLotIds', '[]'::jsonb)) loop
+      select candidate->'value' into lot_value from jsonb_array_elements(p_changes) candidate
+      where candidate->>'kind' = 'leftover-lot' and candidate->>'id' = reference_id;
+      if not found then
+        select value into lot_value from public.household_records
+        where household_id = p_household_id and kind = 'leftover-lot' and record_id = reference_id;
+      end if;
+      source_value := null;
+      source_plan_id := null;
+      if lot_value->>'sourceSlotId' is not null then
+        select candidate->'value', candidate->>'planId' into source_value, source_plan_id from jsonb_array_elements(p_changes) candidate
+        where candidate->>'kind' = 'slot' and candidate->>'id' = lot_value->>'sourceSlotId';
+        if not found then
+          select value, plan_id into source_value, source_plan_id from public.household_records
+          where household_id = p_household_id and kind = 'slot' and record_id = lot_value->>'sourceSlotId';
+        end if;
+      end if;
+      if source_value->>'date' is null or changed->'value'->>'date' is null
+        or (lot_value ? 'sourcePlanId' and lot_value->>'sourcePlanId' is distinct from source_plan_id)
+        or source_value->>'mealId' is distinct from lot_value->>'sourceMealId'
+        or source_value->>'date' >= changed->'value'->>'date' then
+        return jsonb_build_object('status', 400);
+      end if;
+    end loop;
   end loop;
   return jsonb_build_object('status', 200);
 end;

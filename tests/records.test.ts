@@ -387,7 +387,9 @@ describe('record API', () => {
       { seq: 3, kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1', leftoverLotIds: ['lot1'] } },
       { seq: 4, kind: 'slot', id: 's2', planId: 'p2', position: 0, value: { id: 's2', date: '2026-09-28', mealId: 'm1' } },
       { seq: 5, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true } },
-      { seq: 6, kind: 'leftover-lot', id: 'lot1', value: { id: 'lot1', sourceMealId: 'm1', dinnerCoverage: 'one' } },
+      { seq: 6, kind: 'plan', id: 'source_plan', value: { id: 'source_plan' } },
+      { seq: 7, kind: 'slot', id: 'source_slot', planId: 'source_plan', position: 0, value: { id: 'source_slot', date: '2026-09-26', mealId: 'm1' } },
+      { seq: 8, kind: 'leftover-lot', id: 'lot1', value: { id: 'lot1', sourcePlanId: 'source_plan', sourceSlotId: 'source_slot', sourceMealId: 'm1', dinnerCoverage: 'one' } },
     ], [{ mealId: 'm1', count: '0', sum: '0', hasRecipe: false }])
     const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
       householdId, expectedRevision: 0, idempotencyKey: 'transfer-lot', changes: [
@@ -399,6 +401,62 @@ describe('record API', () => {
     }) }))
     expect(response.status).toBe(200)
     expect(rpc.mock.calls.at(-1)?.[0]).toBe('write_household_records')
+  })
+
+  it.each([
+    { label: 'before the source', targetDate: '2026-09-26', lots: ['lot1'] },
+    { label: 'on the source date', targetDate: '2026-09-27', lots: ['lot1'] },
+    { label: 'with two actual lots', targetDate: '2026-09-28', lots: ['lot1', 'lot2'] },
+  ])('rejects an actual leftover target $label', async ({ targetDate, lots }) => {
+    mockAffected([
+      { seq: 1, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true } },
+      { seq: 2, kind: 'plan', id: 'source_plan', value: { id: 'source_plan' } },
+      { seq: 3, kind: 'slot', id: 'source_slot', planId: 'source_plan', position: 0, value: { id: 'source_slot', date: '2026-09-27', mealId: 'm1' } },
+      ...['lot1', 'lot2'].map((id, index) => ({ seq: index + 4, kind: 'leftover-lot', id, value: { id, sourcePlanId: 'source_plan', sourceSlotId: 'source_slot', sourceMealId: 'm1', dinnerCoverage: 'one' } })),
+    ], [{ mealId: 'm1', count: '0', sum: '0', hasRecipe: false }])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'invalid-lot-target', changes: [
+        { kind: 'plan', id: 'target_plan', value: { id: 'target_plan', confirmed: true } },
+        { kind: 'slot', id: 'target_slot', planId: 'target_plan', position: 0, value: { id: 'target_slot', date: targetDate, mealId: 'm1', leftoverLotIds: lots } },
+      ],
+    }) }))
+    expect(response.status).toBe(400)
+    expect(rpc.mock.calls.some(([name]) => name === 'write_household_records')).toBe(false)
+  })
+
+  it('allows one actual lot on a later dinner date', async () => {
+    mockAffected([
+      { seq: 1, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true } },
+      { seq: 2, kind: 'plan', id: 'source_plan', value: { id: 'source_plan' } },
+      { seq: 3, kind: 'slot', id: 'source_slot', planId: 'source_plan', position: 0, value: { id: 'source_slot', date: '2026-09-27', mealId: 'm1' } },
+      { seq: 4, kind: 'leftover-lot', id: 'lot1', value: { id: 'lot1', sourcePlanId: 'source_plan', sourceSlotId: 'source_slot', sourceMealId: 'm1', dinnerCoverage: 'one' } },
+    ], [{ mealId: 'm1', count: '0', sum: '0', hasRecipe: false }])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'later-lot-target', changes: [
+        { kind: 'plan', id: 'target_plan', value: { id: 'target_plan', confirmed: true } },
+        { kind: 'slot', id: 'target_slot', planId: 'target_plan', position: 0, value: { id: 'target_slot', date: '2026-09-28', mealId: 'm1', leftoverLotIds: ['lot1'] } },
+      ],
+    }) }))
+    expect(response.status).toBe(200)
+  })
+
+  it('returns the indexed CAS guard failure when a source date invalidates a selected lot', async () => {
+    const records = [
+      { seq: 1, kind: 'plan', id: 'source_plan', value: { id: 'source_plan' } },
+      { seq: 2, kind: 'slot', id: 'source_slot', planId: 'source_plan', position: 0, value: { id: 'source_slot', date: '2026-09-27', mealId: 'm1' } },
+    ]
+    rpc.mockImplementation((name: string, args: { p_keys?: Array<{ kind: string; id: string }> }) => name === 'read_household_dependencies'
+      ? Promise.resolve({ data: { status: 200, revision: 0, records: records.filter((row) => args.p_keys?.some((key) => key.kind === row.kind && key.id === row.id)), nextCursor: null }, error: null })
+      : name === 'check_household_record_changes'
+        ? Promise.resolve({ data: { status: 400 }, error: null })
+        : Promise.reject(new Error('invalid source reached write')))
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'move-source', changes: [
+        { kind: 'slot', id: 'source_slot', planId: 'source_plan', position: 0, value: { id: 'source_slot', date: '2026-09-28', mealId: 'm1' } },
+      ],
+    }) }))
+    expect(response.status).toBe(400)
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual(['read_household_dependencies', 'check_household_record_changes'])
   })
 
   it('rejects replacement of an existing outcome', async () => {
