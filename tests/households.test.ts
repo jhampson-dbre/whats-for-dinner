@@ -27,6 +27,36 @@ describe('household access API', () => {
     expect(from).not.toHaveBeenCalled()
   })
 
+  it('does not expose a member list after access is revoked', async () => {
+    const householdId = '31a95af5-89dc-4858-9546-5c039852f63a'
+    let reads = 0
+    from.mockReturnValue({ select: () => {
+      reads += 1
+      return reads === 1
+        ? { eq: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { role: 'member' }, error: null }) }) }) }
+        : { eq: () => Promise.resolve({ data: [{ user_id: 'other-id', email: 'other@example.com', role: 'member' }], error: null }) }
+    } })
+    rpc.mockResolvedValue({ data: null, error: null }) // Membership was revoked before the list snapshot.
+    const response = await handler.fetch(new Request(`https://dinner.example/api/households?householdId=${householdId}`, {
+      headers: { authorization: 'Bearer user-token' },
+    }))
+    expect(response.status).toBe(403)
+    expect(rpc).toHaveBeenCalledWith('list_household_members', { p_household_id: householdId, p_user_id: 'user-id' })
+    expect(from).not.toHaveBeenCalled()
+  })
+
+  it('returns the member list from the same authorized database snapshot', async () => {
+    const householdId = '31a95af5-89dc-4858-9546-5c039852f63a'
+    const members = [{ user_id: 'member-id', email: 'member@example.com', role: 'member' }]
+    rpc.mockResolvedValue({ data: members, error: null })
+    const response = await handler.fetch(new Request(`https://dinner.example/api/households?householdId=${householdId}`, {
+      headers: { authorization: 'Bearer user-token' },
+    }))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ members })
+    expect(from).not.toHaveBeenCalled()
+  })
+
   it('rejects member invitation without current creator membership', async () => {
     const membership = { maybeSingle: vi.fn().mockResolvedValue({ data: { role: 'member' }, error: null }) }
     from.mockReturnValue({ select: () => ({ eq: () => ({ eq: () => membership }) }) })

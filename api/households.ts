@@ -32,11 +32,8 @@ export default {
         return error ? fail(500) : json({ households: data })
       }
       if (!uuid.safeParse(householdId).success) return fail(400)
-      const { data: membership, error } = await db.from('household_memberships').select('role').eq('user_id', user.id).eq('household_id', householdId).maybeSingle()
-      if (error) return fail(500)
-      if (!membership) return fail(403)
-      const { data, error: listError } = await db.from('household_memberships').select('user_id,email,role').eq('household_id', householdId)
-      return listError ? fail(500) : json({ members: data })
+      const { data, error } = await db.rpc('list_household_members', { p_household_id: householdId, p_user_id: user.id })
+      return error ? fail(500) : data === null ? fail(403) : json({ members: data })
     }
 
     if (request.method !== 'POST') return fail(405)

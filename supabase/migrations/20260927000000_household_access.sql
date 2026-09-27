@@ -102,3 +102,26 @@ $$;
 
 revoke all on function public.revoke_household_member(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.revoke_household_member(uuid, uuid) to service_role;
+
+create function public.list_household_members(p_household_id uuid, p_user_id uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select (
+    select coalesce(jsonb_agg(jsonb_build_object(
+      'user_id', member.user_id, 'email', member.email, 'role', member.role
+    ) order by member.joined_at, member.user_id), '[]'::jsonb)
+    from public.household_memberships member
+    where member.household_id = p_household_id
+  )
+  where exists (
+    select 1 from public.household_memberships requester
+    where requester.household_id = p_household_id and requester.user_id = p_user_id
+  );
+$$;
+
+revoke all on function public.list_household_members(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.list_household_members(uuid, uuid) to service_role;
