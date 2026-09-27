@@ -13,8 +13,8 @@ const duplicateRecipesDocument = () => {
   return output
 }
 const aggregateHtml = (field: 'ingredients' | 'instructions') => field === 'ingredients'
-  ? fixture.replace('</div>\n    <div itemprop="recipeDirections"', `${Array.from({ length: 65 }, () => `<p>${'x'.repeat(2048)}</p>`).join('')}</div>\n    <div itemprop="recipeDirections"`)
-  : fixture.replace('</div>\n  </article>', `${Array.from({ length: 65 }, () => `<p>${'x'.repeat(2048)}</p>`).join('')}</div>\n  </article>`)
+  ? fixture.replace(/<\/div>\r?\n {4}<div itemprop="recipeDirections"/, `${Array.from({ length: 65 }, () => `<p>${'x'.repeat(2048)}</p>`).join('')}</div>\n    <div itemprop="recipeDirections"`)
+  : fixture.replace(/<\/div>\r?\n {2}<\/article>/, `${Array.from({ length: 65 }, () => `<p>${'x'.repeat(2048)}</p>`).join('')}</div>\n  </article>`)
 const zip64Sizes = (html: string) => {
   const name = strToU8('recipes.html'); const content = strToU8(html); const extra = new Uint8Array(20); const extraView = new DataView(extra.buffer)
   extraView.setUint16(0, 1, true); extraView.setUint16(2, 16, true); extraView.setBigUint64(4, BigInt(content.length), true); extraView.setBigUint64(12, BigInt(content.length), true)

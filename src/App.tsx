@@ -226,8 +226,17 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
     const slot = plan?.slots.find((item) => item.id === slotId)
     if (slot?.leftoverFromSlotId && !plan?.slots.find((item) => item.id === slot.leftoverFromSlotId)?.dinnerReadyAt) { setMessage('Mark the source dinner ready before serving leftovers.'); return }
     const now = new Date()
-    update((current) => ({ ...current, plans: current.plans.map((plan) => plan.id !== planId ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id !== slotId || slot.dinnerReadyAt ? slot : { ...slot, dinnerReadyAt: now.toISOString(), feedbackEligibleAt: new Date(now.getTime() + 30 * 60_000).toISOString(), expectedDinerIds: current.household.diners.filter((diner) => diner.active).map((diner) => diner.id) }) }) }))
-    setMessage('Dinner recorded. Feedback will be available on a later visit.')
+    update((current) => ({ ...current, plans: current.plans.map((plan) => plan.id !== planId ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id !== slotId || slot.dinnerReadyAt ? slot : { ...slot, dinnerReadyAt: now.toISOString(), feedbackEligibleAt: now.toISOString(), expectedDinerIds: current.household.diners.filter((diner) => diner.active).map((diner) => diner.id) }) }) }))
+    setMessage('Dinner recorded. Add feedback when you’re ready.')
+  }
+  const recordDinnerWithoutTiming = (planId: string, slotId: string) => {
+    if (currentReviewSlotIds.has(`${planId}:${slotId}`) || reviewNeeded.has(`${planId}:${slotId}`)) return
+    const plan = state.plans.find((item) => item.id === planId)
+    const slot = plan?.slots.find((item) => item.id === slotId)
+    if (!slot?.mealId || leftoverConsumer(slot) || slot.cookingStartedAt || slot.dinnerReadyAt || slot.date > new Date().toLocaleDateString('en-CA')) return
+    const now = new Date()
+    update((current) => ({ ...current, plans: current.plans.map((plan) => plan.id !== planId ? plan : { ...plan, slots: plan.slots.map((slot) => slot.id !== slotId || slot.dinnerReadyAt ? slot : { ...slot, dinnerReadyAt: now.toISOString(), feedbackEligibleAt: now.toISOString(), expectedDinerIds: current.household.diners.filter((diner) => diner.active).map((diner) => diner.id) }) }) }))
+    setMessage('Dinner recorded without timing. Add feedback when you’re ready.')
   }
   const addDiner = () => {
     const name = dinerName.trim()
@@ -539,7 +548,7 @@ function ReadyApp({ initialState, initialUnsaved = false }: { initialState: AppS
           const outcome = correctedOutcomes(state.outcomes).find((item) => item.planId === plan.id && item.planSlotId === slot.id)
           const needsReview = reviewNeeded.has(`${plan.id}:${slot.id}`) || currentReviewSlotIds.has(`${plan.id}:${slot.id}`)
           const leftoverSourcePending = Boolean(slot.leftoverFromSlotId && !plan.slots.find((item) => item.id === slot.leftoverFromSlotId)?.dinnerReadyAt)
-          return <li key={slot.id}>{slot.date}: {name}{recipeTitle && ` — Recipe: ${recipeTitle}`}{slot.leftoverFromSlotId && ' (planned leftovers)'} {needsReview && <button onClick={() => { setRepairPlanId(plan.id); setRepairSlotId(slot.id); setRepairOpen(false); setRepairPreview(undefined) }}>Review needed</button>} {slot.mealId && !leftoverConsumer(slot) && !slot.cookingStartedAt && !slot.dinnerReadyAt && <button disabled={needsReview} onClick={() => startCooking(plan.id, slot.id)}>Start cooking {name}</button>} {!slot.dinnerReadyAt && <button disabled={needsReview || leftoverSourcePending || Boolean(slot.mealId && !slot.cookingStartedAt && !leftoverConsumer(slot))} onClick={() => dinnerReady(plan.id, slot.id)}>Dinner’s ready {name}</button>} {leftoverSourcePending && <small> Mark the source dinner ready before serving leftovers.</small>} {slot.dinnerReadyAt && <small> Dinner recorded.</small>} {outcome ? <button onClick={() => openFeedback(plan.id, slot.id, outcome.id)}>Correct feedback</button> : slot.dinnerReadyAt && slot.feedbackEligibleAt && slot.feedbackEligibleAt <= new Date().toISOString() && <button onClick={() => openFeedback(plan.id, slot.id)}>Add feedback</button>}</li>
+          return <li key={slot.id}>{slot.date}: {name}{recipeTitle && ` — Recipe: ${recipeTitle}`}{slot.leftoverFromSlotId && ' (planned leftovers)'} {needsReview && <button onClick={() => { setRepairPlanId(plan.id); setRepairSlotId(slot.id); setRepairOpen(false); setRepairPreview(undefined) }}>Review needed</button>} {slot.mealId && !leftoverConsumer(slot) && !slot.cookingStartedAt && !slot.dinnerReadyAt && <><button disabled={needsReview} onClick={() => startCooking(plan.id, slot.id)}>Start cooking {name}</button>{slot.date <= new Date().toLocaleDateString('en-CA') && <button disabled={needsReview} onClick={() => recordDinnerWithoutTiming(plan.id, slot.id)}>Record dinner without timing {name}</button>}</>} {!slot.dinnerReadyAt && <button disabled={needsReview || leftoverSourcePending || Boolean(slot.mealId && !slot.cookingStartedAt && !leftoverConsumer(slot))} onClick={() => dinnerReady(plan.id, slot.id)}>Dinner’s ready {name}</button>} {leftoverSourcePending && <small> Mark the source dinner ready before serving leftovers.</small>} {slot.dinnerReadyAt && <small> Dinner recorded.</small>} {outcome ? <button onClick={() => openFeedback(plan.id, slot.id, outcome.id)}>Correct feedback</button> : slot.dinnerReadyAt && <button onClick={() => openFeedback(plan.id, slot.id)}>Add feedback</button>}</li>
         })}</ol></div>)}
       </section>
       {feedbackPlan && feedbackSlot && <section aria-labelledby="feedback-heading">
