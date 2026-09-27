@@ -373,6 +373,36 @@ begin
       ) then return jsonb_build_object('status', 400); end if;
     end if;
 
+    if changed->>'kind' = 'slot' then
+      reference_id := changed->'value'->>'leftoverFromSlotId';
+      if reference_id is not null and (
+        exists (select 1 from jsonb_array_elements(p_changes) other
+          where other->>'kind' = 'slot' and other->>'id' <> changed->>'id'
+            and other->'value'->>'leftoverFromSlotId' = reference_id)
+        or exists (select 1 from public.household_record_refs ref
+          where ref.household_id = p_household_id and ref.target_kind = 'slot'
+            and ref.target_id = reference_id and ref.source_kind = 'slot'
+            and ref.source_id <> changed->>'id'
+            and not exists (select 1 from jsonb_array_elements(p_changes) other
+              where other->>'kind' = 'slot' and other->>'id' = ref.source_id))
+      ) then return jsonb_build_object('status', 400); end if;
+      for reference_id in select jsonb_array_elements_text(coalesce(changed->'value'->'leftoverLotIds', '[]'::jsonb)) loop
+        if exists (select 1 from jsonb_array_elements(p_changes) other
+          where other->>'kind' = 'slot' and other->>'id' <> changed->>'id'
+            and coalesce(other->'value'->'leftoverLotIds', '[]'::jsonb) ? reference_id)
+          or exists (select 1 from public.household_record_refs ref
+            join public.household_records consumer on consumer.household_id = ref.household_id
+              and consumer.kind = 'slot' and consumer.record_id = ref.source_id
+            where ref.household_id = p_household_id and ref.target_kind = 'leftover-lot'
+              and ref.target_id = reference_id and ref.source_kind = 'slot'
+              and ref.source_id <> changed->>'id'
+              and coalesce(consumer.value->'leftoverLotIds', '[]'::jsonb) ? reference_id
+              and not exists (select 1 from jsonb_array_elements(p_changes) other
+                where other->>'kind' = 'slot' and other->>'id' = ref.source_id))
+        then return jsonb_build_object('status', 400); end if;
+      end loop;
+    end if;
+
     if changed->>'kind' = 'outcome' and changed->'value' ? 'correctionOfOutcomeId' then
       if exists (select 1 from public.household_record_refs ref where ref.household_id = p_household_id
         and ref.target_kind = 'outcome' and ref.target_id = changed->'value'->>'correctionOfOutcomeId'
@@ -418,6 +448,7 @@ declare
   previous_position integer;
   prior_effort record;
   selected_slot jsonb;
+  guard_result jsonb;
 begin
   select revision into current_revision from public.households where id = p_household_id for update;
   if not found then return jsonb_build_object('status', 403); end if;
@@ -476,11 +507,18 @@ begin
           and (previous_plan_id is distinct from changed->>'planId'
             or previous_position is distinct from (changed->>'position')::integer))
         or (changed->>'kind' = 'slot' and previous_value ? 'dinnerReadyAt'
-          and previous_value->>'dinnerReadyAt' is distinct from changed->'value'->>'dinnerReadyAt') then
+          and previous_value->>'dinnerReadyAt' is distinct from changed->'value'->>'dinnerReadyAt')
+        or (changed->>'kind' = 'slot' and previous_value->>'date' is distinct from changed->'value'->>'date'
+          and exists (select 1 from public.household_records parent
+            where parent.household_id = p_household_id and parent.kind = 'plan'
+              and parent.record_id = previous_plan_id and parent.value->>'confirmed' = 'true')) then
         return jsonb_build_object('status', 409);
       end if;
     end if;
   end loop;
+
+  guard_result := public.check_household_record_changes(p_household_id, p_user_id, current_revision, p_changes);
+  if guard_result->>'status' <> '200' then return guard_result; end if;
 
   for changed in select value from jsonb_array_elements(p_changes) with ordinality as entry(value, ordinal) order by ordinal loop
     insert into public.household_records (household_id, kind, record_id, plan_id, position, value)
@@ -493,6 +531,17 @@ begin
   for reference in select value from jsonb_array_elements(p_refs) with ordinality as entry(value, ordinal) order by ordinal loop
     insert into public.household_record_refs (household_id, source_kind, source_id, target_kind, target_id)
     values (p_household_id, reference->>'sourceKind', reference->>'sourceId', reference->>'targetKind', reference->>'targetId')
+    on conflict do nothing;
+  end loop;
+  for changed in select value from jsonb_array_elements(p_changes) as entry(value) where value->>'kind' = 'slot' loop
+    if changed->'value' ? 'leftoverFromSlotId' then
+      insert into public.household_record_refs (household_id, source_kind, source_id, target_kind, target_id)
+      values (p_household_id, 'slot', changed->>'id', 'slot', changed->'value'->>'leftoverFromSlotId')
+      on conflict do nothing;
+    end if;
+    insert into public.household_record_refs (household_id, source_kind, source_id, target_kind, target_id)
+    select p_household_id, 'slot', changed->>'id', 'leftover-lot', lot_id
+    from jsonb_array_elements_text(coalesce(changed->'value'->'leftoverLotIds', '[]'::jsonb)) lot_id
     on conflict do nothing;
   end loop;
 

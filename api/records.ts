@@ -104,6 +104,7 @@ function historyAllowed(old: Row | undefined, next: Change, changes: Change[], l
     if (before.feedbackDismissed === true && after.feedbackDismissed !== true) return false
     if (before.cookingStartedAt && !after.cookingStartedAt && !changes.some((row) => row.kind === 'repair' && row.planId === next.planId && object(row.value).slotId === next.id)) return false
     const plan = object(loaded.get(`plan:${next.planId}`)?.value)
+    if (plan.confirmed && before.date !== after.date) return false
     const selection = (value: Record<string, unknown>) => [value.mealId, value.recipeId, value.leftoverFromSlotId, value.leftoverLotIds, value.leftoverDependencyIds]
     if (plan.confirmed && !isDeepStrictEqual(selection(before), selection(after))
       && !changes.some((row) => row.kind === 'repair' && row.planId === next.planId && object(row.value).slotId === next.id)) return false
@@ -359,6 +360,20 @@ export default {
       const diners = (settings.diners ?? []) as Array<{ id: string; active: boolean }>
       const hardRestrictions = (settings.hardRestrictions ?? []) as Array<{ id: string; dinerId?: string }>
       const exceptions = (settings.scheduleExceptions ?? []) as Array<{ date: string; constrained?: boolean; handsOff?: true }>
+      const selectedIds = new Set(selected.map((slot) => slot.id))
+      const linkTargets = rows.filter((row) => row.kind === 'slot' && object(row.value).leftoverFromSlotId
+        && (selectedIds.has(row.id) || selectedIds.has(String(object(row.value).leftoverFromSlotId))))
+      for (const target of linkTargets) {
+        const targetValue = object(target.value)
+        const source = current.get(`slot:${targetValue.leftoverFromSlotId}`)
+        const sourceValue = object(source?.value)
+        const sourceMeal = object(current.get(`meal:${sourceValue.mealId}`)?.value)
+        const planSlots = rows.filter((row) => row.kind === 'slot' && row.planId === target.planId)
+        if (!source || source.planId !== target.planId || sourceValue.mealId !== targetValue.mealId
+          || typeof sourceValue.date !== 'string' || sourceValue.date >= String(targetValue.date)
+          || sourceValue.leftoverFromSlotId || ids(sourceValue.leftoverLotIds).length || sourceMeal.plannedLeftoverDinner !== true
+          || planSlots.filter((row) => object(row.value).leftoverFromSlotId === source.id).length !== 1) return fail(400)
+      }
       for (const slot of selected) {
         const value = object(slot.value)
         if (!value.mealId) continue
@@ -373,8 +388,6 @@ export default {
           : !linked && (ids(meal.recipeIds).length > 0 || total?.hasRecipe)) return fail(400)
         if (!linked && unavailable.has(`${slot.planId}:${value.mealId}:${value.recipeId ?? ''}`)) return fail(400)
         if (linked) {
-          const planSlots = rows.filter((row) => row.kind === 'slot' && row.planId === slot.planId).sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || a.seq - b.seq)
-          if (source && (source.planId !== slot.planId || planSlots.indexOf(source) >= planSlots.indexOf(slot) || object(source.value).mealId !== value.mealId)) return fail(400)
           if (value.leftoverFromSlotId && !source) return fail(400)
           if (lotIds.some((id) => { const lot = object(current.get(`leftover-lot:${id}`)?.value); return lot.active === false || lot.sourceMealId !== value.mealId || !['one', 'more-than-one'].includes(String(lot.dinnerCoverage)) })) return fail(400)
           continue

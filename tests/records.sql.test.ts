@@ -136,9 +136,48 @@ describe('household record migrations', () => {
       await db.query(`insert into public.household_record_refs(household_id,source_kind,source_id,target_kind,target_id)
         select $1,'slot','history_slot_' || number,'meal','m2' from generate_series(1,300) number`, [household])
       expect((await check([{ kind: 'meal', id: 'm2', value: { id: 'm2', name: 'Soup', active: true, recipeIds: [] } }], 11)).status).toBe(400)
+      await db.query(`insert into public.household_records(household_id,kind,record_id,value) values
+        ($1,'plan','reservation_plan','{"id":"reservation_plan"}'::jsonb),
+        ($1,'plan','other_plan','{"id":"other_plan"}'::jsonb),
+        ($1,'leftover-lot','reserved_lot','{"id":"reserved_lot","sourceMealId":"m2","dinnerCoverage":"one"}'::jsonb)`, [household])
+      await db.query(`insert into public.household_records(household_id,kind,record_id,plan_id,position,value) values
+        ($1,'slot','source_slot','reservation_plan',0,'{"id":"source_slot","date":"2026-09-27","mealId":"m2"}'::jsonb),
+        ($1,'slot','planned_old','reservation_plan',1,'{"id":"planned_old","date":"2026-09-28","mealId":"m2","leftoverFromSlotId":"source_slot"}'::jsonb),
+        ($1,'slot','planned_new','reservation_plan',2,'{"id":"planned_new","date":"2026-09-29","mealId":"m2"}'::jsonb),
+        ($1,'slot','lot_old','reservation_plan',3,'{"id":"lot_old","date":"2026-09-30","mealId":"m2","leftoverLotIds":["reserved_lot"]}'::jsonb),
+        ($1,'slot','lot_new','other_plan',0,'{"id":"lot_new","date":"2026-10-01","mealId":"m2"}'::jsonb)`, [household])
+      await db.query(`insert into public.household_record_refs(household_id,source_kind,source_id,target_kind,target_id) values
+        ($1,'slot','planned_old','slot','source_slot'),
+        ($1,'slot','lot_old','leftover-lot','reserved_lot')`, [household])
+      const target = { kind: 'slot', id: 'planned_new', planId: 'reservation_plan', position: 2, value: { id: 'planned_new', date: '2026-09-29', mealId: 'm2', leftoverFromSlotId: 'source_slot' } }
+      const releaseTarget = { kind: 'slot', id: 'planned_old', planId: 'reservation_plan', position: 1, value: { id: 'planned_old', date: '2026-09-28', mealId: 'm2' } }
+      expect((await check([target], 11)).status).toBe(400)
+      expect((await check([releaseTarget, target], 11)).status).toBe(200)
+      const lotTarget = { kind: 'slot', id: 'lot_new', planId: 'other_plan', position: 0, value: { id: 'lot_new', date: '2026-10-01', mealId: 'm2', leftoverLotIds: ['reserved_lot'] } }
+      const releaseLot = { kind: 'slot', id: 'lot_old', planId: 'reservation_plan', position: 3, value: { id: 'lot_old', date: '2026-09-30', mealId: 'm2' } }
+      expect((await check([lotTarget], 11)).status).toBe(400)
+      expect((await check([releaseLot, lotTarget], 11)).status).toBe(200)
+      expect((await write([household, actor, 11, 'direct-planned-duplicate', 'b'.repeat(64), JSON.stringify([target]), '[]'])).status).toBe(400)
+      expect((await write([household, actor, 11, 'direct-lot-duplicate', 'c'.repeat(64), JSON.stringify([lotTarget]), '[]'])).status).toBe(400)
+      await db.query(`insert into public.household_records(household_id,kind,record_id,value) values
+        ($1,'plan','date_plan','{"id":"date_plan","confirmed":true}'::jsonb)`, [household])
+      await db.query(`insert into public.household_records(household_id,kind,record_id,plan_id,position,value) values
+        ($1,'slot','date_slot','date_plan',0,'{"id":"date_slot","date":"2026-09-27","mealId":"m2"}'::jsonb)`, [household])
+      const moved = [{ kind: 'slot', id: 'date_slot', planId: 'date_plan', position: 0, value: { id: 'date_slot', date: '2026-09-28', mealId: 'm2' } }]
+      expect((await write([household, actor, 11, 'move-date', 'a'.repeat(64), JSON.stringify(moved), '[]'])).status).toBe(409)
+      await db.query(`insert into public.household_records(household_id,kind,record_id,value)
+        values ($1,'leftover-lot','unreferenced_lot','{"id":"unreferenced_lot","sourceMealId":"m2","dinnerCoverage":"one"}'::jsonb)`, [household])
+      const directReserve = [{ ...lotTarget, value: { ...lotTarget.value, leftoverLotIds: ['unreferenced_lot'] } }]
+      expect((await write([household, actor, 11, 'direct-reserve', 'd'.repeat(64), JSON.stringify(directReserve), '[]'])).revision).toBe(12)
+      const indexedLinks = (await db.query<{ count: number }>(`select count(*)::integer count from public.household_record_refs
+        where household_id=$1 and source_kind='slot' and source_id='lot_new'
+          and target_kind='leftover-lot' and target_id='unreferenced_lot'`, [household])).rows[0].count
+      expect(indexedLinks).toBe(1)
+      const secondReserve = [{ ...target, value: { ...target.value, leftoverFromSlotId: undefined, leftoverLotIds: ['unreferenced_lot'] } }]
+      expect((await write([household, actor, 12, 'direct-second-reserve', 'e'.repeat(64), JSON.stringify(secondReserve), '[]'])).status).toBe(400)
       await db.query('delete from public.household_memberships where household_id=$1 and user_id=$2', [household, actor])
       expect((await write(args)).status).toBe(403)
-      expect((await affected(11)).status).toBe(403)
+      expect((await affected(12)).status).toBe(403)
     } finally {
       await db.close()
     }

@@ -243,7 +243,7 @@ describe('record API', () => {
   it('allows a valid linked leftover on a hands-off night', async () => {
     mockAffected([
       { seq: 1, kind: 'settings', id: 'settings', value: { diners: [], hardRestrictions: [], scheduleExceptions: [{ id: 'night1', date: '2026-09-28', handsOff: true }] } },
-      { seq: 2, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, recipeIds: ['r1'] } },
+      { seq: 2, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, plannedLeftoverDinner: true, recipeIds: ['r1'] } },
       { seq: 3, kind: 'recipe', id: 'r1', value: { id: 'r1', title: 'Pasta' } },
     ], [{ mealId: 'm1', recipeId: 'r1', count: '0', sum: '0', hasRecipe: false }, { mealId: 'm1', count: '0', sum: '0', hasRecipe: false }])
     const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
@@ -254,6 +254,75 @@ describe('record API', () => {
       ],
     }) }))
     expect(response.status).toBe(200)
+  })
+
+  it.each([
+    { label: 'two targets from one source', links: ['s1', 's1'] },
+    { label: 'a leftover consumer as source', links: ['s1', 's2'] },
+  ])('rejects confirmation of $label', async ({ links }) => {
+    mockAffected([{ seq: 1, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, plannedLeftoverDinner: true } }],
+      [{ mealId: 'm1', count: '0', sum: '0', hasRecipe: false }])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'invalid-leftovers', changes: [
+        { kind: 'plan', id: 'p1', value: { id: 'p1', confirmed: true } },
+        { kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1' } },
+        { kind: 'slot', id: 's2', planId: 'p1', position: 1, value: { id: 's2', date: '2026-09-28', mealId: 'm1', leftoverFromSlotId: links[0] } },
+        { kind: 'slot', id: 's3', planId: 'p1', position: 2, value: { id: 's3', date: '2026-09-29', mealId: 'm1', leftoverFromSlotId: links[1] } },
+      ],
+    }) }))
+    expect(response.status).toBe(400)
+    expect(rpc.mock.calls.some(([name]) => name === 'write_household_records')).toBe(false)
+  })
+
+  it.each([
+    { label: 'no explicit leftover intent', planned: false, targetDate: '2026-09-28' },
+    { label: 'a source on the target date', planned: true, targetDate: '2026-09-27' },
+  ])('rejects a planned leftover with $label', async ({ planned, targetDate }) => {
+    mockAffected([{ seq: 1, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, ...(planned && { plannedLeftoverDinner: true }) } }],
+      [{ mealId: 'm1', count: '0', sum: '0', hasRecipe: false }])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'invalid-source', changes: [
+        { kind: 'plan', id: 'p1', value: { id: 'p1', confirmed: true } },
+        { kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1' } },
+        { kind: 'slot', id: 's2', planId: 'p1', position: 1, value: { id: 's2', date: targetDate, mealId: 'm1', leftoverFromSlotId: 's1' } },
+      ],
+    }) }))
+    expect(response.status).toBe(400)
+  })
+
+  it('rejects changing the date of an existing confirmed slot', async () => {
+    mockAffected([
+      { seq: 1, kind: 'plan', id: 'p1', value: { id: 'p1', confirmed: true } },
+      { seq: 2, kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1' } },
+      { seq: 3, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true } },
+    ])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'move-date', changes: [
+        { kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-28', mealId: 'm1' } },
+      ],
+    }) }))
+    expect(response.status).toBe(400)
+  })
+
+  it('allows one request to release a lot and reserve it for another plan', async () => {
+    mockAffected([
+      { seq: 1, kind: 'plan', id: 'p1', value: { id: 'p1', confirmed: true } },
+      { seq: 2, kind: 'plan', id: 'p2', value: { id: 'p2', confirmed: true } },
+      { seq: 3, kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1', leftoverLotIds: ['lot1'] } },
+      { seq: 4, kind: 'slot', id: 's2', planId: 'p2', position: 0, value: { id: 's2', date: '2026-09-28', mealId: 'm1' } },
+      { seq: 5, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true } },
+      { seq: 6, kind: 'leftover-lot', id: 'lot1', value: { id: 'lot1', sourceMealId: 'm1', dinnerCoverage: 'one' } },
+    ], [{ mealId: 'm1', count: '0', sum: '0', hasRecipe: false }])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'transfer-lot', changes: [
+        { kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1' } },
+        { kind: 'repair', id: 'repair1', planId: 'p1', position: 0, value: { id: 'repair1', createdAt: '2026-09-27T18:00:00Z', slotId: 's1', kind: 'recovery' } },
+        { kind: 'slot', id: 's2', planId: 'p2', position: 0, value: { id: 's2', date: '2026-09-28', mealId: 'm1', leftoverLotIds: ['lot1'] } },
+        { kind: 'repair', id: 'repair2', planId: 'p2', position: 0, value: { id: 'repair2', createdAt: '2026-09-27T18:00:00Z', slotId: 's2', kind: 'leftovers', leftoverLotId: 'lot1' } },
+      ],
+    }) }))
+    expect(response.status).toBe(200)
+    expect(rpc.mock.calls.at(-1)?.[0]).toBe('write_household_records')
   })
 
   it('rejects replacement of an existing outcome', async () => {
