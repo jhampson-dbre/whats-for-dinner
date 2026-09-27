@@ -66,9 +66,38 @@ describe('household record migrations', () => {
         { kind: 'meal', id: 'duplicate', value: { id: 'duplicate', name: 'Second', active: true } },
       ]
       expect((await write([household, actor, 4, 'duplicate', 'e'.repeat(64), JSON.stringify(duplicate), '[]'])).status).toBe(400)
+      const linked = [
+        { kind: 'meal', id: 'm2', value: { id: 'm2', name: 'Soup', active: true, recipeIds: ['r2'] } },
+        { kind: 'recipe', id: 'r2', value: { id: 'r2', title: 'Soup recipe' } },
+        { kind: 'plan', id: 'p2', value: { id: 'p2' } },
+        { kind: 'slot', id: 's2', planId: 'p2', position: 0, value: { id: 's2', date: '2026-09-28', mealId: 'm2', recipeId: 'r2', dinnerReadyAt: '2026-09-28T18:00:00Z' } },
+      ]
+      const linkedRefs = [
+        { sourceKind: 'meal', sourceId: 'm2', targetKind: 'recipe', targetId: 'r2' },
+        { sourceKind: 'slot', sourceId: 's2', targetKind: 'plan', targetId: 'p2' },
+        { sourceKind: 'slot', sourceId: 's2', targetKind: 'meal', targetId: 'm2' },
+        { sourceKind: 'slot', sourceId: 's2', targetKind: 'recipe', targetId: 'r2' },
+      ]
+      expect((await write([household, actor, 4, 'linked', 'f'.repeat(64), JSON.stringify(linked), JSON.stringify(linkedRefs)])).revision).toBe(5)
+      const check = async (changes: unknown[], revision = 5) => (await db.query<{ result: { status: number } }>(
+        'select public.check_household_record_changes($1::uuid,$2::uuid,$3::bigint,$4::jsonb) result', [household, actor, revision, JSON.stringify(changes)],
+      )).rows[0].result
+      expect((await check([{ kind: 'meal', id: 'm2', value: { id: 'm2', name: 'Soup', active: true, recipeIds: [] } }])).status).toBe(400)
+      expect((await check([{ kind: 'meal', id: 'm2', value: { id: 'm2', name: 'Noodle soup', active: true, recipeIds: ['r2'] } }])).status).toBe(200)
+      const linkedOutcome = [{ kind: 'outcome', id: 'o2', value: { id: 'o2', planId: 'p2', planSlotId: 's2', mealId: 'm2', recipeId: 'r2' } }]
+      const outcomeRefs = [
+        { sourceKind: 'outcome', sourceId: 'o2', targetKind: 'plan', targetId: 'p2' },
+        { sourceKind: 'outcome', sourceId: 'o2', targetKind: 'slot', targetId: 's2' },
+        { sourceKind: 'outcome', sourceId: 'o2', targetKind: 'meal', targetId: 'm2' },
+        { sourceKind: 'outcome', sourceId: 'o2', targetKind: 'recipe', targetId: 'r2' },
+      ]
+      expect((await write([household, actor, 5, 'linked-outcome', 'a'.repeat(64), JSON.stringify(linkedOutcome), JSON.stringify(outcomeRefs)])).revision).toBe(6)
+      const takeout = { kind: 'slot', id: 's2', planId: 'p2', position: 0, value: { id: 's2', date: '2026-09-28', dinnerReadyAt: '2026-09-28T18:00:00Z' } }
+      expect((await check([takeout], 6)).status).toBe(400)
+      expect((await check([takeout, { kind: 'outcome', id: 'o3', value: { id: 'o3', correctionOfOutcomeId: 'o2', planId: 'p2', planSlotId: 's2' } }], 6)).status).toBe(200)
       await db.query('delete from public.household_memberships where household_id=$1 and user_id=$2', [household, actor])
       expect((await write(args)).status).toBe(403)
-      expect((await affected(4)).status).toBe(403)
+      expect((await affected(6)).status).toBe(403)
     } finally {
       await db.close()
     }

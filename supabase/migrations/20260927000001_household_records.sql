@@ -147,6 +147,143 @@ begin
 end;
 $$;
 
+create function public.check_household_record_changes(
+  p_household_id uuid, p_user_id uuid, p_revision bigint, p_changes jsonb
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  current_revision bigint;
+  changed jsonb;
+  previous_value jsonb;
+  reference_id text;
+begin
+  select revision into current_revision from public.households where id = p_household_id for share;
+  if not found then return jsonb_build_object('status', 403); end if;
+  perform 1 from public.household_memberships where household_id = p_household_id and user_id = p_user_id for share;
+  if not found then return jsonb_build_object('status', 403); end if;
+  if current_revision <> p_revision then return jsonb_build_object('status', 409); end if;
+  if jsonb_typeof(p_changes) is distinct from 'array' then return jsonb_build_object('status', 400); end if;
+
+  for changed in select value from jsonb_array_elements(p_changes) as entry(value) loop
+    select value into previous_value from public.household_records
+    where household_id = p_household_id and kind = changed->>'kind' and record_id = changed->>'id';
+
+    if changed->>'kind' = 'meal' then
+      -- Existing unfinished slots must still have an associated recipe after this edit.
+      if exists (
+        select 1 from public.household_record_refs link
+        join public.household_records slot on slot.household_id = link.household_id
+          and slot.kind = 'slot' and slot.record_id = link.source_id
+        join public.household_records plan on plan.household_id = slot.household_id
+          and plan.kind = 'plan' and plan.record_id = slot.plan_id
+        left join public.household_records recipe on recipe.household_id = slot.household_id
+          and recipe.kind = 'recipe' and recipe.record_id = slot.value->>'recipeId'
+        where link.household_id = p_household_id and link.target_kind = 'meal' and link.target_id = changed->>'id'
+          and link.source_kind = 'slot' and slot.value ? 'recipeId'
+          and coalesce(plan.value->>'confirmed', 'false') <> 'true'
+          and not exists (select 1 from jsonb_array_elements(p_changes) c where c->>'kind' = 'slot' and c->>'id' = slot.record_id)
+          and not coalesce(changed->'value'->'recipeIds', '[]'::jsonb) ? (slot.value->>'recipeId')
+          and coalesce((select c->'value'->>'mealId' from jsonb_array_elements(p_changes) c
+            where c->>'kind' = 'recipe' and c->>'id' = slot.value->>'recipeId'), recipe.value->>'mealId') is distinct from changed->>'id'
+      ) then return jsonb_build_object('status', 400); end if;
+
+      for reference_id in select item->>'id' from jsonb_array_elements(coalesce(previous_value->'adaptations', '[]'::jsonb)) item
+        where not exists (select 1 from jsonb_array_elements(coalesce(changed->'value'->'adaptations', '[]'::jsonb)) next where next->>'id' = item->>'id') loop
+        if exists (select 1 from public.household_record_refs ref where ref.household_id = p_household_id
+          and ref.target_kind = 'adaptation' and ref.target_id = reference_id and ref.source_kind = 'repair') then
+          return jsonb_build_object('status', 400);
+        end if;
+      end loop;
+      for reference_id in select item->>'id' from jsonb_array_elements(coalesce(changed->'value'->'adaptations', '[]'::jsonb)) item loop
+        if exists (select 1 from public.household_record_refs ref where ref.household_id = p_household_id
+          and ref.target_kind = 'adaptation' and ref.target_id = reference_id and ref.source_kind = 'meal'
+          and ref.source_id <> changed->>'id') then return jsonb_build_object('status', 400); end if;
+      end loop;
+      for reference_id in select jsonb_array_elements_text(coalesce(changed->'value'->'recipeIds', '[]'::jsonb)) loop
+        if exists (select 1 from public.household_record_refs ref where ref.household_id = p_household_id
+          and ref.target_kind = 'recipe' and ref.target_id = reference_id and ref.source_kind = 'meal'
+          and ref.source_id <> changed->>'id'
+          and not exists (select 1 from jsonb_array_elements(p_changes) c where c->>'kind' = 'meal' and c->>'id' = ref.source_id
+            and not coalesce(c->'value'->'recipeIds', '[]'::jsonb) ? reference_id)) then return jsonb_build_object('status', 400); end if;
+      end loop;
+    end if;
+
+    if changed->>'kind' = 'recipe' then
+      if exists (
+        select 1 from public.household_record_refs link
+        join public.household_records slot on slot.household_id = link.household_id
+          and slot.kind = 'slot' and slot.record_id = link.source_id
+        join public.household_records plan on plan.household_id = slot.household_id
+          and plan.kind = 'plan' and plan.record_id = slot.plan_id
+        left join public.household_records meal on meal.household_id = slot.household_id
+          and meal.kind = 'meal' and meal.record_id = slot.value->>'mealId'
+        where link.household_id = p_household_id and link.target_kind = 'recipe' and link.target_id = changed->>'id'
+          and link.source_kind = 'slot' and slot.value ? 'mealId'
+          and coalesce(plan.value->>'confirmed', 'false') <> 'true'
+          and not exists (select 1 from jsonb_array_elements(p_changes) c where c->>'kind' = 'slot' and c->>'id' = slot.record_id)
+          and changed->'value'->>'mealId' is distinct from slot.value->>'mealId'
+          and not coalesce((select c->'value'->'recipeIds' from jsonb_array_elements(p_changes) c
+            where c->>'kind' = 'meal' and c->>'id' = slot.value->>'mealId'), meal.value->'recipeIds', '[]'::jsonb) ? (changed->>'id')
+      ) then return jsonb_build_object('status', 400); end if;
+    end if;
+
+    if changed->>'kind' = 'slot' and previous_value is not null then
+      -- Corrected outcomes remain in history; only active evidence must match the slot.
+      if exists (
+        select 1 from public.household_record_refs link
+        join public.household_records outcome on outcome.household_id = link.household_id
+          and outcome.kind = 'outcome' and outcome.record_id = link.source_id
+        where link.household_id = p_household_id and link.target_kind = 'slot' and link.target_id = changed->>'id'
+          and link.source_kind = 'outcome'
+          and not exists (select 1 from public.household_record_refs correction where correction.household_id = p_household_id
+            and correction.target_kind = 'outcome' and correction.target_id = outcome.record_id and correction.source_kind = 'outcome')
+          and not exists (select 1 from jsonb_array_elements(p_changes) c where c->>'kind' = 'outcome'
+            and c->'value'->>'correctionOfOutcomeId' = outcome.record_id)
+          and ((outcome.value ? 'mealId' and outcome.value->>'mealId' is distinct from changed->'value'->>'mealId')
+            or (outcome.value ? 'recipeId' and outcome.value->>'recipeId' is distinct from changed->'value'->>'recipeId')
+            or (previous_value ? 'dinnerReadyAt' and changed->'value'->>'mealId' is null))
+      ) then return jsonb_build_object('status', 400); end if;
+      if exists (
+        select 1 from public.household_record_refs link
+        join public.household_records lot on lot.household_id = link.household_id
+          and lot.kind = 'leftover-lot' and lot.record_id = link.source_id
+        where link.household_id = p_household_id and link.target_kind = 'slot' and link.target_id = changed->>'id'
+          and link.source_kind = 'leftover-lot' and coalesce(lot.value->>'active', 'true') <> 'false'
+          and lot.value->>'sourceMealId' is distinct from changed->'value'->>'mealId'
+          and not exists (select 1 from jsonb_array_elements(p_changes) c where c->>'kind' = 'leftover-lot' and c->>'id' = lot.record_id)
+      ) then return jsonb_build_object('status', 400); end if;
+    end if;
+
+    if changed->>'kind' = 'outcome' and changed->'value' ? 'correctionOfOutcomeId' then
+      if exists (select 1 from public.household_record_refs ref where ref.household_id = p_household_id
+        and ref.target_kind = 'outcome' and ref.target_id = changed->'value'->>'correctionOfOutcomeId'
+        and ref.source_kind = 'outcome' and ref.source_id <> changed->>'id') then return jsonb_build_object('status', 400); end if;
+    end if;
+
+    if changed->>'kind' = 'settings' and previous_value is not null then
+      for reference_id in select diner->>'id' from jsonb_array_elements(previous_value->'diners') diner
+        where not exists (select 1 from jsonb_array_elements(changed->'value'->'diners') next where next->>'id' = diner->>'id') loop
+        if exists (select 1 from public.household_record_refs ref where ref.household_id = p_household_id
+          and ref.target_kind = 'diner' and ref.target_id = reference_id
+          and not exists (select 1 from jsonb_array_elements(p_changes) c where c->>'kind' = ref.source_kind and c->>'id' = ref.source_id)) then
+          return jsonb_build_object('status', 400);
+        end if;
+      end loop;
+    end if;
+
+    if changed->>'kind' = 'plan' then
+      for reference_id in select item->>'id' from jsonb_array_elements(coalesce(changed->'value'->'variants', '[]'::jsonb)) item loop
+        if exists (select 1 from public.household_record_refs ref where ref.household_id = p_household_id
+          and ref.target_kind = 'variant' and ref.target_id = reference_id and ref.source_kind = 'plan'
+          and ref.source_id <> changed->>'id') then return jsonb_build_object('status', 400); end if;
+      end loop;
+    end if;
+  end loop;
+  return jsonb_build_object('status', 200);
+end;
+$$;
+
 create function public.write_household_records(
   p_household_id uuid, p_user_id uuid, p_expected_revision bigint,
   p_key text, p_digest text, p_changes jsonb, p_refs jsonb
@@ -246,5 +383,5 @@ begin
 end;
 $$;
 
-revoke all on function public.read_household_records(uuid, uuid, text, bigint, bigint, integer), public.read_household_dependencies(uuid, uuid, bigint, jsonb, jsonb, text[], bigint, integer), public.write_household_records(uuid, uuid, bigint, text, text, jsonb, jsonb) from public, anon, authenticated;
-grant execute on function public.read_household_records(uuid, uuid, text, bigint, bigint, integer), public.read_household_dependencies(uuid, uuid, bigint, jsonb, jsonb, text[], bigint, integer), public.write_household_records(uuid, uuid, bigint, text, text, jsonb, jsonb) to service_role;
+revoke all on function public.read_household_records(uuid, uuid, text, bigint, bigint, integer), public.read_household_dependencies(uuid, uuid, bigint, jsonb, jsonb, text[], bigint, integer), public.check_household_record_changes(uuid, uuid, bigint, jsonb), public.write_household_records(uuid, uuid, bigint, text, text, jsonb, jsonb) from public, anon, authenticated;
+grant execute on function public.read_household_records(uuid, uuid, text, bigint, bigint, integer), public.read_household_dependencies(uuid, uuid, bigint, jsonb, jsonb, text[], bigint, integer), public.check_household_record_changes(uuid, uuid, bigint, jsonb), public.write_household_records(uuid, uuid, bigint, text, text, jsonb, jsonb) to service_role;

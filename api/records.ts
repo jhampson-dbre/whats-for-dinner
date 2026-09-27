@@ -84,30 +84,6 @@ function refs(row: Change): Ref[] {
   return [...new Map(found.map((ref) => [`${ref.targetKind}:${ref.targetId}`, ref])).values()]
 }
 
-function incomingFor(old: Row | undefined, next: Change): Incoming[] {
-  const before = object(old?.value)
-  const after = object(next.value)
-  const incoming: Incoming[] = []
-  const add = (kind: string, id: string, sourceKinds: Kind[]) => incoming.push({ kind, id, sourceKinds })
-  if (next.kind === 'slot' && old && (!isDeepStrictEqual(
-    [before.mealId, before.recipeId, before.leftoverFromSlotId, before.leftoverLotIds, before.leftoverDependencyIds, before.date],
-    [after.mealId, after.recipeId, after.leftoverFromSlotId, after.leftoverLotIds, after.leftoverDependencyIds, after.date],
-  ) || old.planId !== next.planId)) add('slot', next.id, ['slot', 'shopping-item', 'repair', 'outcome', 'leftover-lot'])
-  if (next.kind === 'meal') {
-    for (const id of new Set([...ids(before.recipeIds), ...ids(after.recipeIds)])) add('recipe', id, ['meal'])
-    for (const id of new Set([...(before.adaptations as { id: string }[] | undefined) ?? [], ...(after.adaptations as { id: string }[] | undefined) ?? []].map((value) => value.id))) add('adaptation', id, ['meal', 'repair'])
-    if (old && JSON.stringify(before.recipeIds) !== JSON.stringify(after.recipeIds)) add('meal', next.id, ['recipe', 'slot'])
-  }
-  if (next.kind === 'recipe' && old && before.mealId !== after.mealId) add('recipe', next.id, ['meal', 'slot'])
-  if (next.kind === 'plan') for (const id of new Set([...(before.variants as { id: string }[] | undefined) ?? [], ...(after.variants as { id: string }[] | undefined) ?? []].map((value) => value.id))) add('variant', id, ['plan'])
-  if (next.kind === 'outcome' && typeof after.correctionOfOutcomeId === 'string') add('outcome', after.correctionOfOutcomeId, ['outcome'])
-  if (next.kind === 'settings' && old) {
-    const nextDiners = new Set(((after.diners as { id: string }[] | undefined) ?? []).map((value) => value.id))
-    for (const diner of (before.diners as { id: string }[] | undefined) ?? []) if (!nextDiners.has(diner.id)) add('diner', diner.id, ['meal', 'slot', 'outcome'])
-  }
-  return incoming
-}
-
 function historyAllowed(old: Row | undefined, next: Change, changes: Change[], loaded: Map<string, Row>): boolean {
   if (next.kind === 'shopping-item' && !old && object(loaded.get(`plan:${next.planId}`)?.value).shopping) return false
   if (!old) return true
@@ -139,14 +115,6 @@ function historyAllowed(old: Row | undefined, next: Change, changes: Change[], l
       && !after.leftoverFromSlotId && !after.leftoverLotIds && !after.leftoverDependencyIds
       && isDeepStrictEqual(stable(before), stable(after))
       && changes.some((row) => row.kind === 'repair' && row.planId === next.planId && object(row.value).slotId === next.id && object(row.value).kind === 'takeout')
-      && [...loaded.values()].filter((row) => row.kind === 'outcome' && object(row.value).planSlotId === next.id)
-        .filter((row, _, outcomes) => !outcomes.some((candidate) => object(candidate.value).correctionOfOutcomeId === row.id))
-        .every((row) => changes.some((candidate) => {
-          const value = object(candidate.value)
-          return candidate.kind === 'outcome' && value.correctionOfOutcomeId === row.id
-            && !value.mealId && !value.recipeId && !value.cookingStartedAt && value.activeEffortMinutes === undefined
-            && !value.leftoverCoverage && !value.leftoverServing
-        }))
     if (!justDismissed && !correction) return false
   }
   return true
@@ -276,6 +244,11 @@ export default {
         ? json({ revision: (replay.data as RpcResult).revision }) : fail((replay.data as RpcResult).status)
     }
     if (first !== 200) return fail(first)
+    const checked = await db.rpc('check_household_record_changes', {
+      p_household_id: householdId, p_user_id: user.id, p_revision: expectedRevision, p_changes: changes,
+    })
+    if (checked.error) return fail(500)
+    if ((checked.data as RpcResult).status !== 200) return fail((checked.data as RpcResult).status)
 
     const direct = new Map<string, Key>()
     const incoming = new Map<string, Incoming>()
@@ -301,7 +274,6 @@ export default {
     for (const row of loaded.values()) queue(row)
     for (const row of changes) {
       queue(row)
-      for (const target of incomingFor(loaded.get(keyOf(row)), row)) incoming.set(`${target.kind}:${target.id}:${target.sourceKinds.join(',')}`, target)
     }
     while (direct.size || incoming.size || planIds.size) {
       const keys = [...direct.values()].filter((target) => !seenDirect.has(keyOf(target))).slice(0, 100)

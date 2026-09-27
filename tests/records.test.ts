@@ -76,7 +76,7 @@ describe('record API', () => {
       ],
     }) }))
     expect(response.status).toBe(400)
-    expect(rpc.mock.calls.every(([name]) => name === 'read_household_dependencies')).toBe(true)
+    expect(rpc.mock.calls.some(([name]) => name === 'write_household_records')).toBe(false)
   })
 
   it('requires the revision on continuation pages', async () => {
@@ -98,6 +98,8 @@ describe('record API', () => {
   it('validates a new meal through targeted reads without paging retained history', async () => {
     rpc.mockImplementation((name: string) => name === 'read_household_dependencies'
       ? Promise.resolve({ data: { status: 200, revision: 0, records: [], nextCursor: null }, error: null })
+      : name === 'check_household_record_changes'
+        ? Promise.resolve({ data: { status: 200 }, error: null })
       : name === 'write_household_records'
         ? Promise.resolve({ data: { status: 200, revision: 1 }, error: null })
         : Promise.reject(new Error('whole-household scan')))
@@ -105,7 +107,26 @@ describe('record API', () => {
       householdId, expectedRevision: 0, idempotencyKey: 'new-meal', changes: [{ kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true } }],
     }) }))
     expect(response.status).toBe(200)
-    expect(rpc.mock.calls.map(([name]) => name)).toEqual(['read_household_dependencies', 'write_household_records'])
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual(['read_household_dependencies', 'check_household_record_changes', 'write_household_records'])
+  })
+
+  it('does not hydrate years of incoming slots for a meal recipe change', async () => {
+    const records = [
+      { seq: 1, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, recipeIds: ['r1'] } },
+      { seq: 2, kind: 'recipe', id: 'r1', value: { id: 'r1', title: 'Original', mealId: 'm1' } },
+      { seq: 3, kind: 'recipe', id: 'r2', value: { id: 'r2', title: 'New', mealId: 'm1' } },
+    ]
+    rpc.mockImplementation((name: string, args: { p_keys?: Array<{ kind: string; id: string }>; p_incoming?: unknown[] }) => {
+      if (name === 'check_household_record_changes') return Promise.resolve({ data: { status: 200 }, error: null })
+      if (name === 'write_household_records') return Promise.resolve({ data: { status: 200, revision: 2 }, error: null })
+      if (name !== 'read_household_dependencies' || args.p_incoming?.length) throw new Error('incoming history hydrated')
+      return Promise.resolve({ data: { status: 200, revision: 1, records: records.filter((row) => args.p_keys?.some((key) => key.kind === row.kind && key.id === row.id)), nextCursor: null }, error: null })
+    })
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 1, idempotencyKey: 'recipe-change', changes: [{ kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, recipeIds: ['r1', 'r2'] } }],
+    }) }))
+    expect(response.status).toBe(200)
+    expect(rpc.mock.calls.filter(([name]) => name === 'read_household_dependencies').length).toBeLessThanOrEqual(2)
   })
 
   it('rejects replacement of an existing outcome', async () => {
@@ -116,7 +137,7 @@ describe('record API', () => {
       householdId, expectedRevision: 3, idempotencyKey: 'replace', changes: [{ kind: 'outcome', id: 'o1', value: { id: 'o1', acceptance: 'rejected' } }],
     }) }))
     expect(response.status).toBe(400)
-    expect(rpc.mock.calls.every(([name]) => name === 'read_household_dependencies')).toBe(true)
+    expect(rpc.mock.calls.some(([name]) => name === 'write_household_records')).toBe(false)
   })
 
   it('rejects a completed-slot takeout rewrite without an audit revision', async () => {
@@ -129,11 +150,13 @@ describe('record API', () => {
         value: { id: 's1', date: '2026-09-27', dinnerReadyAt: '2026-09-27T18:00:00Z' } }],
     }) }))
     expect(response.status).toBe(400)
-    expect(rpc.mock.calls.every(([name]) => name === 'read_household_dependencies')).toBe(true)
+    expect(rpc.mock.calls.some(([name]) => name === 'write_household_records')).toBe(false)
   })
 
   it('rejects a second correction of the same outcome', async () => {
-    rpc.mockImplementation((name: string, args: { p_incoming?: unknown[] }) => name === 'read_household_dependencies'
+    rpc.mockImplementation((name: string, args: { p_incoming?: unknown[] }) => name === 'check_household_record_changes'
+      ? Promise.resolve({ data: { status: 400 }, error: null })
+      : name === 'read_household_dependencies'
       ? Promise.resolve({ data: { status: 200, revision: 2, records: args.p_incoming?.length ? [
         { seq: 1, kind: 'outcome', id: 'o1', value: { id: 'o1', acceptance: 'accepted' } },
         { seq: 2, kind: 'outcome', id: 'o2', value: { id: 'o2', correctionOfOutcomeId: 'o1', acceptance: 'rejected' } },
@@ -143,7 +166,7 @@ describe('record API', () => {
       householdId, expectedRevision: 2, idempotencyKey: 'fork', changes: [{ kind: 'outcome', id: 'o3', value: { id: 'o3', correctionOfOutcomeId: 'o1', acceptance: 'neutral' } }],
     }) }))
     expect(response.status).toBe(400)
-    expect(rpc.mock.calls.every(([name]) => name === 'read_household_dependencies')).toBe(true)
+    expect(rpc.mock.calls.some(([name]) => name === 'write_household_records')).toBe(false)
   })
 
   it('requires an atomic repair revision when a confirmed slot changes meals', async () => {
@@ -172,6 +195,7 @@ describe('record API', () => {
       { seq: 4, kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1', recipeId: 'r1' } },
     ]
     rpc.mockImplementation((name: string, args: { p_keys?: Array<{ kind: string; id: string }>; p_incoming?: Array<{ kind: string; id: string; sourceKinds: string[] }>; p_plan_ids?: string[] }) => {
+      if (name === 'check_household_record_changes') return Promise.resolve({ data: { status: 400 }, error: null })
       if (name !== 'read_household_dependencies') return Promise.reject(new Error('invalid write'))
       const selected = records.filter((row) => args.p_keys?.some((key) => key.kind === row.kind && key.id === row.id)
         || (row.kind === 'slot' && args.p_plan_ids?.includes(row.planId ?? ''))
@@ -182,7 +206,8 @@ describe('record API', () => {
       householdId, expectedRevision: 1, idempotencyKey: 'remove-association', changes: [{ kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, recipeIds: [] } }],
     }) }))
     expect(response.status).toBe(400)
-    expect(rpc.mock.calls.some(([name, args]) => name === 'read_household_dependencies' && args.p_incoming?.some((key: { kind: string }) => key.kind === 'meal'))).toBe(true)
+    expect(rpc.mock.calls.some(([name]) => name === 'check_household_record_changes')).toBe(true)
+    expect(rpc.mock.calls.some(([name, args]) => name === 'read_household_dependencies' && args.p_incoming?.length)).toBe(false)
   })
 
   it('accepts an atomic completed-dinner takeout correction with append-only evidence', async () => {
@@ -193,9 +218,9 @@ describe('record API', () => {
       { seq: 4, kind: 'outcome', id: 'o1', value: { id: 'o1', planId: 'p1', planSlotId: 's1', mealId: 'm1', acceptance: 'accepted' } },
     ]
     rpc.mockImplementation((name: string, args: { p_keys?: Array<{ kind: string; id: string }>; p_incoming?: Array<{ kind: string; id: string }>; p_plan_ids?: string[] }) => name === 'read_household_dependencies'
-      ? Promise.resolve({ data: { status: 200, revision: 4, records: existing.filter((row) => args.p_keys?.some((key) => key.kind === row.kind && key.id === row.id)
+      ? (args.p_incoming?.length ? Promise.reject(new Error('outcome history hydrated')) : Promise.resolve({ data: { status: 200, revision: 4, records: existing.filter((row) => args.p_keys?.some((key) => key.kind === row.kind && key.id === row.id)
         || (row.kind === 'slot' && args.p_plan_ids?.includes(row.planId ?? ''))
-        || (row.kind === 'outcome' && args.p_incoming?.some((key) => key.kind === 'slot' && key.id === 's1'))), nextCursor: null }, error: null })
+        ), nextCursor: null }, error: null }))
       : Promise.resolve({ data: { status: 200, revision: 5 }, error: null }))
     const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
       householdId, expectedRevision: 4, idempotencyKey: 'takeout-correction', changes: [
@@ -206,5 +231,6 @@ describe('record API', () => {
     }) }))
     expect(response.status).toBe(200)
     expect(rpc.mock.calls.at(-1)?.[0]).toBe('write_household_records')
+    expect(rpc.mock.calls.filter(([name]) => name === 'read_household_dependencies').length).toBeLessThanOrEqual(4)
   })
 })
