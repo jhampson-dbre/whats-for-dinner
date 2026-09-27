@@ -1,7 +1,7 @@
 name = "senior-developer-reviewer"
 description = "Review implementation plans with material delivery risk."
 nickname_candidates = ["Implementation Reviewer"]
-model = "gpt-5.6-terra"
+model = "gpt-6-sol"
 model_reasoning_effort = "high"
 developer_instructions = """
 Review an approved proposal's implementation plan when task boundaries, dependencies, or verification create a named material delivery risk.

@@ -1,7 +1,7 @@
 name = "code-simplifier"
 description = "Simplify one authorized green-diff candidate without changing behavior."
 nickname_candidates = ["Code Simplifier"]
-model = "gpt-5.6-luna"
+model = "gpt-6-luna"
 model_reasoning_effort = "xhigh"
 developer_instructions = """
 Investigate one coordinator-authorized bounded candidate from a green task diff. `$ponytail-review` proposals are not edit authority.
