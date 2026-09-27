@@ -45,7 +45,7 @@ const keyOf = ({ kind, id }: Key) => `${kind}:${id}`
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {}
 const ids = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 
-function refs(row: Change): Ref[] {
+export function refs(row: Change): Ref[] {
   const value = object(row.value)
   const found: Ref[] = []
   const add = (targetKind: string, targetId: unknown) => {
@@ -123,7 +123,7 @@ function historyAllowed(old: Row | undefined, next: Change, changes: Change[], l
   return true
 }
 
-function validChange(row: Change): boolean {
+export function validChange(row: Change): boolean {
   if (children.has(row.kind) !== Boolean(row.planId) || (children.has(row.kind) !== (row.position !== undefined))) return false
   if (row.kind === 'settings') return row.id === 'settings' && schemas.settings.safeParse(row.value).success
   const parsed = schemas[row.kind].safeParse(row.value)
@@ -140,7 +140,7 @@ const serverState = appStateV4Schema.safeExtend({
   leftoverLots: z.array(schemas['leftover-lot']), outcomes: z.array(schemas.outcome),
 })
 
-function validHousehold(rows: Row[]): boolean {
+export function validHousehold(rows: Row[]): boolean {
   const byKind = <K extends Kind>(selected: K) => rows.filter((row) => row.kind === selected)
   const settings = byKind('settings')
   if (settings.length > 1 || rows.some((row) => children.has(row.kind) && !rows.some((parent) => parent.kind === 'plan' && parent.id === row.planId))) return false
