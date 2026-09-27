@@ -3,6 +3,8 @@ import { isDeepStrictEqual } from 'node:util'
 import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import { appStateV4Schema } from '../src/state/schema'
+import { mealEligibility } from '../src/domain/mealEligibility'
+import { normalizedIngredientLine } from '../src/domain/grocery'
 
 const uuid = z.string().uuid()
 const recordId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)
@@ -259,6 +261,7 @@ export default {
     const queue = (row: Change) => {
       if (row.kind === 'plan') planIds.add(row.id)
       if (row.planId) planIds.add(row.planId)
+      if (row.kind === 'plan' || row.kind === 'slot') direct.set('settings:settings', { kind: 'settings', id: 'settings' })
       for (const ref of refs(row)) {
         if (kind.safeParse(ref.targetKind).success) {
           const target = { kind: ref.targetKind, id: ref.targetId }
@@ -299,6 +302,91 @@ export default {
       else rows[index] = { ...row, seq: rows[index].seq }
     }
     if (!validHousehold(rows)) return fail(400)
+
+    const current = new Map(rows.map((row) => [keyOf(row), row]))
+    const newlyConfirmed = new Set(changes.filter((row) => row.kind === 'plan' && object(row.value).confirmed === true
+      && object(loaded.get(keyOf(row))?.value).confirmed !== true).map((row) => row.id))
+    const selection = (value: Record<string, unknown>) => [value.date, value.mealId, value.recipeId, value.leftoverFromSlotId, value.leftoverLotIds]
+    const selected = rows.filter((row) => row.kind === 'slot' && object(current.get(`plan:${row.planId}`)?.value).confirmed === true
+      && (newlyConfirmed.has(row.planId!) || changes.some((change) => change.kind === 'slot' && change.id === row.id
+        && !isDeepStrictEqual(selection(object(loaded.get(keyOf(row))?.value)), selection(object(row.value))))))
+    if (selected.length) {
+      const pairs = [...new Map(selected.flatMap((slot) => {
+        const value = object(slot.value)
+        const recipe = object(current.get(`recipe:${value.recipeId}`)?.value)
+        return typeof value.mealId === 'string' ? [[`${slot.planId}:${value.mealId}:${value.recipeId ?? ''}`, {
+          planId: slot.planId, mealId: value.mealId, recipeId: value.recipeId,
+          ingredientLines: ids(recipe.ingredients).map(normalizedIngredientLine),
+        }]] as const : []
+      })).values()]
+      type Effort = { status: number; totals?: Array<{ planId: string; mealId: string; recipeId?: string; count: string; sum: string; hasRecipe: boolean; unavailable: boolean }>; contributions?: Array<{ outcomeId: string; mealId: string; recipeId?: string; minutes: number; active: boolean }> }
+      const facts: NonNullable<Effort['totals']> = []
+      const contributions = new Map<string, NonNullable<Effort['contributions']>[number]>()
+      for (let index = 0; index < pairs.length; index += 100) {
+        const { data: effortData, error: effortError } = await db.rpc('read_household_effort', {
+          p_household_id: householdId, p_user_id: user.id, p_revision: expectedRevision, p_pairs: pairs.slice(index, index + 100),
+          p_corrections: changes.filter((row) => row.kind === 'outcome').flatMap((row) => ids([object(row.value).correctionOfOutcomeId])),
+          p_changes: changes,
+        })
+        if (effortError) return fail(500)
+        const effort = effortData as Effort
+        if (effort.status !== 200) return fail(effort.status)
+        facts.push(...effort.totals ?? [])
+        for (const prior of effort.contributions ?? []) contributions.set(prior.outcomeId, prior)
+      }
+      const totals = new Map(facts.map((entry) => [`${entry.mealId}:${entry.recipeId ?? ''}`, { count: BigInt(entry.count), sum: BigInt(entry.sum), hasRecipe: entry.hasRecipe }]))
+      const unavailable = new Set(facts.filter((entry) => entry.unavailable).map((entry) => `${entry.planId}:${entry.mealId}:${entry.recipeId ?? ''}`))
+      const adjust = (mealId: string, recipeId: string | undefined, minutes: number, sign: 1 | -1) => {
+        const total = totals.get(`${mealId}:${recipeId ?? ''}`)
+        if (total) { total.count += BigInt(sign); total.sum += BigInt(sign * minutes) }
+      }
+      for (const changed of changes.filter((row) => row.kind === 'outcome')) {
+        const value = object(changed.value)
+        const prior = contributions.get(String(value.correctionOfOutcomeId))
+        if (prior?.active) {
+          adjust(prior.mealId, prior.recipeId, prior.minutes, -1)
+          prior.active = false
+        }
+        const source = current.get(`slot:${value.planSlotId}`)
+        const sourceValue = object(source?.value)
+        if (typeof value.mealId === 'string' && typeof value.activeEffortMinutes === 'number'
+          && value.leftoverServing !== true && !sourceValue.leftoverFromSlotId && !ids(sourceValue.leftoverLotIds).length) {
+          adjust(value.mealId, typeof value.recipeId === 'string' ? value.recipeId : undefined, value.activeEffortMinutes, 1)
+          contributions.set(changed.id, { outcomeId: changed.id, mealId: value.mealId, recipeId: typeof value.recipeId === 'string' ? value.recipeId : undefined, minutes: value.activeEffortMinutes, active: true })
+        }
+      }
+      const settings = object(current.get('settings:settings')?.value)
+      const diners = (settings.diners ?? []) as Array<{ id: string; active: boolean }>
+      const hardRestrictions = (settings.hardRestrictions ?? []) as Array<{ id: string; dinerId?: string }>
+      const exceptions = (settings.scheduleExceptions ?? []) as Array<{ date: string; constrained?: boolean; handsOff?: true }>
+      for (const slot of selected) {
+        const value = object(slot.value)
+        if (!value.mealId) continue
+        const meal = object(current.get(`meal:${value.mealId}`)?.value)
+        const recipe = value.recipeId ? object(current.get(`recipe:${value.recipeId}`)?.value) : undefined
+        const total = totals.get(`${value.mealId}:${value.recipeId ?? ''}`)
+        if (!meal.active || !mealEligibility({ diners, hardRestrictions, safetyReview: meal.safetyReview as 'unknown' | 'approved' | 'rejected' | undefined }).eligible) return fail(400)
+        const source = value.leftoverFromSlotId ? current.get(`slot:${value.leftoverFromSlotId}`) : undefined
+        const lotIds = ids(value.leftoverLotIds)
+        const linked = Boolean(value.leftoverFromSlotId || lotIds.length)
+        if (recipe ? recipe.mealId !== value.mealId && !ids(meal.recipeIds).includes(String(value.recipeId))
+          : !linked && (ids(meal.recipeIds).length > 0 || total?.hasRecipe)) return fail(400)
+        if (!linked && unavailable.has(`${slot.planId}:${value.mealId}:${value.recipeId ?? ''}`)) return fail(400)
+        if (linked) {
+          const planSlots = rows.filter((row) => row.kind === 'slot' && row.planId === slot.planId).sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || a.seq - b.seq)
+          if (source && (source.planId !== slot.planId || planSlots.indexOf(source) >= planSlots.indexOf(slot) || object(source.value).mealId !== value.mealId)) return fail(400)
+          if (value.leftoverFromSlotId && !source) return fail(400)
+          if (lotIds.some((id) => { const lot = object(current.get(`leftover-lot:${id}`)?.value); return lot.active === false || lot.sourceMealId !== value.mealId || !['one', 'more-than-one'].includes(String(lot.dinnerCoverage)) })) return fail(400)
+          continue
+        }
+        const sameDate = exceptions.filter((entry) => entry.date === value.date)
+        if (sameDate.some((entry) => entry.handsOff)) {
+          if (recipe?.handsOffSlowCooker !== true) return fail(400)
+        } else if (sameDate.some((entry) => entry.constrained)) {
+          if (!total || (total.count ? total.sum > total.count * 30n : typeof recipe?.prepMinutes !== 'number' || recipe.prepMinutes > 30)) return fail(400)
+        }
+      }
+    }
     const { data, error } = await db.rpc('write_household_records', writeParams)
     if (error) return fail(500)
     const result = data as RpcResult

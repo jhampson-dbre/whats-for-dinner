@@ -95,9 +95,50 @@ describe('household record migrations', () => {
       const takeout = { kind: 'slot', id: 's2', planId: 'p2', position: 0, value: { id: 's2', date: '2026-09-28', dinnerReadyAt: '2026-09-28T18:00:00Z' } }
       expect((await check([takeout], 6)).status).toBe(400)
       expect((await check([takeout, { kind: 'outcome', id: 'o3', value: { id: 'o3', correctionOfOutcomeId: 'o2', planId: 'p2', planSlotId: 's2' } }], 6)).status).toBe(200)
+      const effort = (id: string, minutes?: number, correctionOfOutcomeId?: string) => [{ kind: 'outcome', id, value: { id, mealId: 'm2', recipeId: 'r2', planSlotId: 's2', ...(minutes !== undefined && { activeEffortMinutes: minutes }), ...(correctionOfOutcomeId && { correctionOfOutcomeId }) } }]
+      const total = async () => (await db.query<{ effort_count: number; effort_sum: number }>(
+        "select effort_count,effort_sum from public.household_effort_totals where household_id=$1 and meal_id='m2' and recipe_id='r2'", [household],
+      )).rows[0]
+      expect((await write([household, actor, 6, 'effort1', 'b'.repeat(64), JSON.stringify(effort('o4', 20)), '[]'])).revision).toBe(7)
+      expect(await total()).toEqual({ effort_count: 1, effort_sum: 20 })
+      expect((await write([household, actor, 7, 'effort2', 'c'.repeat(64), JSON.stringify(effort('o5', 40, 'o4')), '[]'])).revision).toBe(8)
+      expect(await total()).toEqual({ effort_count: 1, effort_sum: 40 })
+      expect((await write([household, actor, 8, 'effort3', 'd'.repeat(64), JSON.stringify(effort('o6', undefined, 'o5')), '[]'])).revision).toBe(9)
+      expect(await total()).toEqual({ effort_count: 0, effort_sum: 0 })
+      const unavailable = [{ kind: 'shopping-item', id: 'item2', planId: 'p2', position: 1, value: { id: 'item2', label: 'Milk', sourceLines: ['1 cup milk'], mealIds: [], perishable: true, availability: 'unavailable' } }]
+      expect((await write([household, actor, 9, 'unavailable', 'e'.repeat(64), JSON.stringify(unavailable), '[]'])).revision).toBe(10)
+      const facts = (await db.query<{ result: { status: number; totals: Array<{ count: string; sum: string; unavailable: boolean }> } }>(
+        'select public.read_household_effort($1::uuid,$2::uuid,$3::bigint,$4::jsonb,$5::jsonb,$6::jsonb) result',
+        [household, actor, 10, JSON.stringify([{ planId: 'p2', mealId: 'm2', recipeId: 'r2', ingredientLines: ['cup:milk'] }]), '[]', '[]'],
+      )).rows[0].result
+      expect(facts.status).toBe(200)
+      expect(facts.totals[0]).toMatchObject({ count: '0', sum: '0', unavailable: true })
+      const planChildren = (await db.query<{ result: { records: Array<{ kind: string }> } }>(
+        'select public.read_household_dependencies($1::uuid,$2::uuid,10,$3::jsonb,$4::jsonb,$5::text[],0,100) result',
+        [household, actor, '[]', '[]', ['p2']],
+      )).rows[0].result.records
+      expect(planChildren.every((row) => row.kind === 'slot')).toBe(true)
+      const activeEffort = [{ kind: 'outcome', id: 'o7', value: { id: 'o7', mealId: 'm2', recipeId: 'r2', planSlotId: 's2', activeEffortMinutes: 20 } }]
+      const activeRefs = [{ sourceKind: 'outcome', sourceId: 'o7', targetKind: 'slot', targetId: 's2' }]
+      expect((await write([household, actor, 10, 'slot-effort', 'f'.repeat(64), JSON.stringify(activeEffort), JSON.stringify(activeRefs)])).revision).toBe(11)
+      const makeLeftover = { kind: 'slot', id: 's2', planId: 'p2', position: 0, value: { id: 's2', date: '2026-09-28', mealId: 'm2', recipeId: 'r2', dinnerReadyAt: '2026-09-28T18:00:00Z', leftoverFromSlotId: 's1' } }
+      expect((await check([makeLeftover], 11)).status).toBe(400)
+      expect((await check([makeLeftover, { kind: 'outcome', id: 'o8', value: { id: 'o8', mealId: 'm2', recipeId: 'r2', planSlotId: 's2', correctionOfOutcomeId: 'o7' } }], 11)).status).toBe(200)
+
+      // A retained history of dependent slots still produces one scalar guard result.
+      await db.query(`insert into public.household_records(household_id,kind,record_id,value)
+        select $1,'plan','history_plan_' || number,jsonb_build_object('id','history_plan_' || number)
+        from generate_series(1,300) number`, [household])
+      await db.query(`insert into public.household_records(household_id,kind,record_id,plan_id,position,value)
+        select $1,'slot','history_slot_' || number,'history_plan_' || number,0,
+          jsonb_build_object('id','history_slot_' || number,'date','2026-09-27','mealId','m2','recipeId','r2')
+        from generate_series(1,300) number`, [household])
+      await db.query(`insert into public.household_record_refs(household_id,source_kind,source_id,target_kind,target_id)
+        select $1,'slot','history_slot_' || number,'meal','m2' from generate_series(1,300) number`, [household])
+      expect((await check([{ kind: 'meal', id: 'm2', value: { id: 'm2', name: 'Soup', active: true, recipeIds: [] } }], 11)).status).toBe(400)
       await db.query('delete from public.household_memberships where household_id=$1 and user_id=$2', [household, actor])
       expect((await write(args)).status).toBe(403)
-      expect((await affected(6)).status).toBe(403)
+      expect((await affected(11)).status).toBe(403)
     } finally {
       await db.close()
     }

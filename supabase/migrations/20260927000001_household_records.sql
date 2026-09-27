@@ -14,6 +14,56 @@ create table public.household_records (
 );
 create index household_record_pages on public.household_records (household_id, kind, seq);
 create index household_record_plan_slots on public.household_records (household_id, plan_id, seq) where kind = 'slot';
+create function public.normalized_ingredient_line(line text) returns text
+language plpgsql immutable set search_path = ''
+as $$
+declare
+  parts text[];
+  unit text;
+begin
+  parts := regexp_match(btrim(line), '^([0-9]+([.][0-9]+)?)\s+([A-Za-z]+)\s+(.+)$');
+  if parts is not null then
+    unit := case lower(parts[3])
+      when 'cups' then 'cup' when 'cup' then 'cup'
+      when 'tablespoon' then 'tbsp' when 'tablespoons' then 'tbsp' when 'tbsp' then 'tbsp'
+      when 'teaspoon' then 'tsp' when 'teaspoons' then 'tsp' when 'tsp' then 'tsp'
+      when 'ounce' then 'oz' when 'ounces' then 'oz' when 'oz' then 'oz'
+      when 'pound' then 'lb' when 'pounds' then 'lb' when 'lbs' then 'lb' when 'lb' then 'lb'
+    end;
+    if unit is not null and btrim(parts[4]) <> '' then
+      return unit || ':' || regexp_replace(lower(btrim(parts[4])), '\s+', ' ', 'g');
+    end if;
+  end if;
+  return 'raw:' || regexp_replace(lower(btrim(line)), '\s+', ' ', 'g');
+end;
+$$;
+
+create table public.household_unavailable_lines (
+  household_id uuid not null references public.households(id) on delete cascade,
+  plan_id text not null,
+  item_id text not null,
+  normalized_line text not null,
+  primary key (household_id, plan_id, item_id, normalized_line)
+);
+create index household_unavailable_line_lookup on public.household_unavailable_lines (household_id, plan_id, normalized_line);
+
+create table public.household_effort_totals (
+  household_id uuid not null references public.households(id) on delete cascade,
+  meal_id text not null,
+  recipe_id text not null,
+  effort_count bigint not null default 0 check (effort_count >= 0),
+  effort_sum bigint not null default 0 check (effort_sum >= 0),
+  primary key (household_id, meal_id, recipe_id)
+);
+create table public.household_effort_contributions (
+  household_id uuid not null references public.households(id) on delete cascade,
+  outcome_id text not null,
+  meal_id text not null,
+  recipe_id text not null,
+  minutes integer not null check (minutes >= 0),
+  active boolean not null default true,
+  primary key (household_id, outcome_id)
+);
 
 create table public.household_record_refs (
   household_id uuid not null,
@@ -40,8 +90,11 @@ create table public.household_record_requests (
 alter table public.household_records enable row level security;
 alter table public.household_record_refs enable row level security;
 alter table public.household_record_requests enable row level security;
-revoke all on public.household_records, public.household_record_refs, public.household_record_requests from public, anon, authenticated;
-grant all on public.household_records, public.household_record_refs, public.household_record_requests to service_role;
+alter table public.household_effort_totals enable row level security;
+alter table public.household_effort_contributions enable row level security;
+alter table public.household_unavailable_lines enable row level security;
+revoke all on public.household_records, public.household_record_refs, public.household_record_requests, public.household_effort_totals, public.household_effort_contributions, public.household_unavailable_lines from public, anon, authenticated;
+grant all on public.household_records, public.household_record_refs, public.household_record_requests, public.household_effort_totals, public.household_effort_contributions, public.household_unavailable_lines to service_role;
 
 create function public.read_household_records(
   p_household_id uuid, p_user_id uuid, p_kind text, p_revision bigint default null,
@@ -147,6 +200,60 @@ begin
 end;
 $$;
 
+create function public.read_household_effort(
+  p_household_id uuid, p_user_id uuid, p_revision bigint, p_pairs jsonb, p_corrections jsonb, p_changes jsonb
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  current_revision bigint;
+  totals jsonb;
+  prior jsonb;
+begin
+  if jsonb_typeof(p_pairs) is distinct from 'array' or jsonb_typeof(p_corrections) is distinct from 'array' or jsonb_typeof(p_changes) is distinct from 'array'
+    or jsonb_array_length(p_pairs) > 100 or jsonb_array_length(p_corrections) > 100 then
+    return jsonb_build_object('status', 400);
+  end if;
+  select revision into current_revision from public.households where id = p_household_id for share;
+  if not found then return jsonb_build_object('status', 403); end if;
+  perform 1 from public.household_memberships where household_id = p_household_id and user_id = p_user_id for share;
+  if not found then return jsonb_build_object('status', 403); end if;
+  if p_revision <> current_revision then return jsonb_build_object('status', 409); end if;
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'planId', requested->>'planId', 'mealId', requested->>'mealId', 'recipeId', requested->>'recipeId',
+    'count', coalesce(total.effort_count, 0)::text, 'sum', coalesce(total.effort_sum, 0)::text,
+    'hasRecipe', exists (select 1 from public.household_record_refs ref
+      where ref.household_id = p_household_id and ref.source_kind = 'recipe'
+        and ref.target_kind = 'meal' and ref.target_id = requested->>'mealId'
+        and not exists (select 1 from jsonb_array_elements(p_changes) changed
+          where changed->>'kind' = 'recipe' and changed->>'id' = ref.source_id))
+      or exists (select 1 from jsonb_array_elements(p_changes) changed
+        where changed->>'kind' = 'recipe' and changed->'value'->>'mealId' = requested->>'mealId'),
+    'unavailable', exists (select 1 from jsonb_array_elements_text(coalesce(requested->'ingredientLines', '[]'::jsonb)) ingredient
+      join public.household_unavailable_lines line on line.household_id = p_household_id
+        and line.plan_id = requested->>'planId' and line.normalized_line = ingredient)
+      or exists (select 1 from jsonb_array_elements(p_changes) changed
+        cross join lateral jsonb_array_elements_text(coalesce(changed->'value'->'sourceLines', '[]'::jsonb)) source_line
+        join jsonb_array_elements_text(coalesce(requested->'ingredientLines', '[]'::jsonb)) ingredient
+          on public.normalized_ingredient_line(source_line) = ingredient
+        where changed->>'kind' = 'shopping-item' and changed->>'planId' = requested->>'planId'
+          and changed->'value'->>'availability' = 'unavailable')
+  )), '[]'::jsonb) into totals
+  from jsonb_array_elements(p_pairs) requested
+  left join public.household_effort_totals total on total.household_id = p_household_id
+    and total.meal_id = requested->>'mealId' and total.recipe_id = coalesce(requested->>'recipeId', '');
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'outcomeId', contribution.outcome_id, 'mealId', contribution.meal_id,
+    'recipeId', nullif(contribution.recipe_id, ''), 'minutes', contribution.minutes,
+    'active', contribution.active
+  )), '[]'::jsonb) into prior
+  from jsonb_array_elements_text(p_corrections) requested
+  join public.household_effort_contributions contribution on contribution.household_id = p_household_id
+    and contribution.outcome_id = requested;
+  return jsonb_build_object('status', 200, 'totals', totals, 'contributions', prior);
+end;
+$$;
+
 create function public.check_household_record_changes(
   p_household_id uuid, p_user_id uuid, p_revision bigint, p_changes jsonb
 ) returns jsonb
@@ -229,6 +336,17 @@ begin
     end if;
 
     if changed->>'kind' = 'slot' and previous_value is not null then
+      if (changed->'value' ? 'leftoverFromSlotId'
+        or jsonb_array_length(coalesce(changed->'value'->'leftoverLotIds', '[]'::jsonb)) > 0)
+        and exists (
+          select 1 from public.household_record_refs link
+          join public.household_effort_contributions effort on effort.household_id = link.household_id
+            and effort.outcome_id = link.source_id and effort.active
+          where link.household_id = p_household_id and link.target_kind = 'slot'
+            and link.target_id = changed->>'id' and link.source_kind = 'outcome'
+            and not exists (select 1 from jsonb_array_elements(p_changes) correction
+              where correction->>'kind' = 'outcome' and correction->'value'->>'correctionOfOutcomeId' = effort.outcome_id)
+        ) then return jsonb_build_object('status', 400); end if;
       -- Corrected outcomes remain in history; only active evidence must match the slot.
       if exists (
         select 1 from public.household_record_refs link
@@ -298,6 +416,8 @@ declare
   previous_value jsonb;
   previous_plan_id text;
   previous_position integer;
+  prior_effort record;
+  selected_slot jsonb;
 begin
   select revision into current_revision from public.households where id = p_household_id for update;
   if not found then return jsonb_build_object('status', 403); end if;
@@ -376,6 +496,43 @@ begin
     on conflict do nothing;
   end loop;
 
+  for changed in select value from jsonb_array_elements(p_changes) with ordinality as entry(value, ordinal) order by ordinal loop
+    if changed->>'kind' = 'shopping-item' and changed->'value'->>'availability' = 'unavailable' then
+      insert into public.household_unavailable_lines (household_id, plan_id, item_id, normalized_line)
+      select p_household_id, changed->>'planId', changed->>'id', public.normalized_ingredient_line(source_line)
+      from jsonb_array_elements_text(changed->'value'->'sourceLines') source_line
+      on conflict do nothing;
+    end if;
+  end loop;
+
+  for changed in select value from jsonb_array_elements(p_changes) with ordinality as entry(value, ordinal) order by ordinal loop
+    if changed->>'kind' <> 'outcome' then continue; end if;
+    if changed->'value' ? 'correctionOfOutcomeId' then
+      update public.household_effort_contributions set active = false
+      where household_id = p_household_id and outcome_id = changed->'value'->>'correctionOfOutcomeId' and active
+      returning meal_id, recipe_id, minutes into prior_effort;
+      if found then
+        update public.household_effort_totals
+        set effort_count = effort_count - 1, effort_sum = effort_sum - prior_effort.minutes
+        where household_id = p_household_id and meal_id = prior_effort.meal_id and recipe_id = prior_effort.recipe_id;
+      end if;
+    end if;
+    select value into selected_slot from public.household_records
+    where household_id = p_household_id and kind = 'slot' and record_id = changed->'value'->>'planSlotId';
+    if changed->'value' ? 'mealId' and changed->'value' ? 'activeEffortMinutes'
+      and coalesce(changed->'value'->>'leftoverServing', 'false') <> 'true'
+      and not (coalesce(selected_slot ? 'leftoverFromSlotId', false)
+        or coalesce(jsonb_array_length(coalesce(selected_slot->'leftoverLotIds', '[]'::jsonb)), 0) > 0) then
+      insert into public.household_effort_contributions (household_id, outcome_id, meal_id, recipe_id, minutes)
+      values (p_household_id, changed->>'id', changed->'value'->>'mealId', coalesce(changed->'value'->>'recipeId', ''), (changed->'value'->>'activeEffortMinutes')::integer);
+      insert into public.household_effort_totals (household_id, meal_id, recipe_id, effort_count, effort_sum)
+      values (p_household_id, changed->'value'->>'mealId', coalesce(changed->'value'->>'recipeId', ''), 1, (changed->'value'->>'activeEffortMinutes')::integer)
+      on conflict (household_id, meal_id, recipe_id) do update
+        set effort_count = public.household_effort_totals.effort_count + 1,
+            effort_sum = public.household_effort_totals.effort_sum + excluded.effort_sum;
+    end if;
+  end loop;
+
   update public.households set revision = revision + 1 where id = p_household_id returning revision into current_revision;
   insert into public.household_record_requests (household_id, actor_id, operation, request_key, payload_digest, revision)
   values (p_household_id, p_user_id, 'upsert', p_key, p_digest, current_revision);
@@ -383,5 +540,5 @@ begin
 end;
 $$;
 
-revoke all on function public.read_household_records(uuid, uuid, text, bigint, bigint, integer), public.read_household_dependencies(uuid, uuid, bigint, jsonb, jsonb, text[], bigint, integer), public.check_household_record_changes(uuid, uuid, bigint, jsonb), public.write_household_records(uuid, uuid, bigint, text, text, jsonb, jsonb) from public, anon, authenticated;
-grant execute on function public.read_household_records(uuid, uuid, text, bigint, bigint, integer), public.read_household_dependencies(uuid, uuid, bigint, jsonb, jsonb, text[], bigint, integer), public.check_household_record_changes(uuid, uuid, bigint, jsonb), public.write_household_records(uuid, uuid, bigint, text, text, jsonb, jsonb) to service_role;
+revoke all on function public.normalized_ingredient_line(text), public.read_household_records(uuid, uuid, text, bigint, bigint, integer), public.read_household_dependencies(uuid, uuid, bigint, jsonb, jsonb, text[], bigint, integer), public.read_household_effort(uuid, uuid, bigint, jsonb, jsonb, jsonb), public.check_household_record_changes(uuid, uuid, bigint, jsonb), public.write_household_records(uuid, uuid, bigint, text, text, jsonb, jsonb) from public, anon, authenticated;
+grant execute on function public.normalized_ingredient_line(text), public.read_household_records(uuid, uuid, text, bigint, bigint, integer), public.read_household_dependencies(uuid, uuid, bigint, jsonb, jsonb, text[], bigint, integer), public.read_household_effort(uuid, uuid, bigint, jsonb, jsonb, jsonb), public.check_household_record_changes(uuid, uuid, bigint, jsonb), public.write_household_records(uuid, uuid, bigint, text, text, jsonb, jsonb) to service_role;

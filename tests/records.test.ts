@@ -17,6 +17,18 @@ describe('record API', () => {
     getUser.mockResolvedValue({ data: { user: { id: 'user-id', email: 'cook@example.com', email_confirmed_at: '2026-09-27T00:00:00Z' } }, error: null })
   })
 
+  const mockAffected = (records: Array<{ seq: number; kind: string; id: string; planId?: string; position?: number; value: unknown }>, totals: Array<{ planId?: string; mealId: string; recipeId?: string; count: string; sum: string; hasRecipe: boolean; unavailable?: boolean }> = [], contributions: unknown[] = []) => {
+    rpc.mockImplementation((name: string, args: { p_keys?: Array<{ kind: string; id: string }>; p_plan_ids?: string[] }) => {
+      if (name === 'read_household_dependencies') return Promise.resolve({ data: {
+        status: 200, revision: 0,
+        records: records.filter((row) => args.p_keys?.some((key) => key.kind === row.kind && key.id === row.id)
+          || (row.kind === 'slot' && args.p_plan_ids?.includes(row.planId ?? ''))), nextCursor: null,
+      }, error: null })
+      if (name === 'read_household_effort') return Promise.resolve({ data: { status: 200, totals, contributions }, error: null })
+      return Promise.resolve({ data: { status: 200, revision: 1 }, error: null })
+    })
+  }
+
   it('requires a verified actor and live membership for a pinned page', async () => {
     rpc.mockResolvedValue({ data: { status: 403 }, error: null })
     const response = await handler.fetch(new Request(`https://dinner.example/api/records?householdId=${householdId}&kind=meal&revision=4`, { headers }))
@@ -115,18 +127,133 @@ describe('record API', () => {
       { seq: 1, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, recipeIds: ['r1'] } },
       { seq: 2, kind: 'recipe', id: 'r1', value: { id: 'r1', title: 'Original', mealId: 'm1' } },
       { seq: 3, kind: 'recipe', id: 'r2', value: { id: 'r2', title: 'New', mealId: 'm1' } },
+      ...Array.from({ length: 300 }, (_, index) => ({ seq: index + 4, kind: 'slot', id: `historical-slot-${index}`, planId: `historical-plan-${index}`, value: { id: `historical-slot-${index}`, date: '2026-09-27', mealId: 'm1', recipeId: 'r1' } })),
     ]
+    let returned = 0
     rpc.mockImplementation((name: string, args: { p_keys?: Array<{ kind: string; id: string }>; p_incoming?: unknown[] }) => {
       if (name === 'check_household_record_changes') return Promise.resolve({ data: { status: 200 }, error: null })
       if (name === 'write_household_records') return Promise.resolve({ data: { status: 200, revision: 2 }, error: null })
       if (name !== 'read_household_dependencies' || args.p_incoming?.length) throw new Error('incoming history hydrated')
-      return Promise.resolve({ data: { status: 200, revision: 1, records: records.filter((row) => args.p_keys?.some((key) => key.kind === row.kind && key.id === row.id)), nextCursor: null }, error: null })
+      const selected = records.filter((row) => args.p_keys?.some((key) => key.kind === row.kind && key.id === row.id))
+      returned += selected.length
+      return Promise.resolve({ data: { status: 200, revision: 1, records: selected, nextCursor: null }, error: null })
     })
     const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
       householdId, expectedRevision: 1, idempotencyKey: 'recipe-change', changes: [{ kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, recipeIds: ['r1', 'r2'] } }],
     }) }))
     expect(response.status).toBe(200)
     expect(rpc.mock.calls.filter(([name]) => name === 'read_household_dependencies').length).toBeLessThanOrEqual(2)
+    expect(returned).toBeLessThanOrEqual(3)
+  })
+
+  it('rejects direct confirmation of a meal marked unsafe', async () => {
+    const existing = [{ seq: 1, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, safetyReview: 'rejected' } }]
+    rpc.mockImplementation((name: string, args: { p_keys?: Array<{ kind: string; id: string }> }) => name === 'read_household_dependencies'
+      ? Promise.resolve({ data: { status: 200, revision: 0, records: existing.filter((row) => args.p_keys?.some((key) => key.kind === row.kind && key.id === row.id)), nextCursor: null }, error: null })
+      : Promise.resolve({ data: { status: 200, revision: 1 }, error: null }))
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'unsafe-plan', changes: [
+        { kind: 'plan', id: 'p1', value: { id: 'p1', confirmed: true } },
+        { kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1' } },
+      ],
+    }) }))
+    expect(response.status).toBe(400)
+    expect(rpc.mock.calls.some(([name]) => name === 'write_household_records')).toBe(false)
+  })
+
+  it('rejects an unsafe selection in a confirmed-plan repair', async () => {
+    mockAffected([
+      { seq: 1, kind: 'plan', id: 'p1', value: { id: 'p1', confirmed: true } },
+      { seq: 2, kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1' } },
+      { seq: 3, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true } },
+      { seq: 4, kind: 'meal', id: 'm2', value: { id: 'm2', name: 'Soup', active: true, safetyReview: 'rejected' } },
+    ], [{ mealId: 'm2', count: '0', sum: '0', hasRecipe: false }])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'unsafe-repair', changes: [
+        { kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm2' } },
+        { kind: 'repair', id: 'repair1', planId: 'p1', position: 0, value: { id: 'repair1', createdAt: '2026-09-27T19:00:00Z', slotId: 's1', kind: 'recovery' } },
+      ],
+    }) }))
+    expect(response.status).toBe(400)
+    expect(rpc.mock.calls.some(([name]) => name === 'write_household_records')).toBe(false)
+  })
+
+  it('allows a settings edit that makes an existing confirmed plan need repair', async () => {
+    mockAffected([{ seq: 1, kind: 'settings', id: 'settings', value: { diners: [], hardRestrictions: [], scheduleExceptions: [] } }])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'new-restriction', changes: [{ kind: 'settings', id: 'settings', value: {
+        diners: [], hardRestrictions: [{ id: 'restriction1', label: 'No peanuts' }], scheduleExceptions: [],
+      } }],
+    }) }))
+    expect(response.status).toBe(200)
+    expect(rpc.mock.calls.some(([name]) => name === 'read_household_effort')).toBe(false)
+  })
+
+  it('uses a corrected effort outcome for constrained-night confirmation', async () => {
+    mockAffected([
+      { seq: 1, kind: 'settings', id: 'settings', value: { diners: [], hardRestrictions: [], scheduleExceptions: [{ id: 'night1', date: '2026-09-27', constrained: true }] } },
+      { seq: 2, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, recipeIds: ['r1'] } },
+      { seq: 3, kind: 'recipe', id: 'r1', value: { id: 'r1', title: 'Pasta', prepMinutes: 45 } },
+      { seq: 4, kind: 'outcome', id: 'o1', value: { id: 'o1', mealId: 'm1', recipeId: 'r1', activeEffortMinutes: 45 } },
+    ], [{ mealId: 'm1', recipeId: 'r1', count: '1', sum: '45', hasRecipe: false }], [
+      { outcomeId: 'o1', mealId: 'm1', recipeId: 'r1', minutes: 45, active: true },
+    ])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'corrected-effort', changes: [
+        { kind: 'outcome', id: 'o2', value: { id: 'o2', mealId: 'm1', recipeId: 'r1', activeEffortMinutes: 10, correctionOfOutcomeId: 'o1' } },
+        { kind: 'plan', id: 'p1', value: { id: 'p1', confirmed: true } },
+        { kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1', recipeId: 'r1' } },
+      ],
+    }) }))
+    expect(response.status).toBe(200)
+    expect(rpc.mock.calls.some(([name]) => name === 'read_household_effort')).toBe(true)
+  })
+
+  it('rejects a confirmed recipe with an indexed unavailable ingredient', async () => {
+    mockAffected([
+      { seq: 1, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, recipeIds: ['r1'] } },
+      { seq: 2, kind: 'recipe', id: 'r1', value: { id: 'r1', title: 'Pasta', ingredients: ['2 cups milk'] } },
+    ], [{ planId: 'p1', mealId: 'm1', recipeId: 'r1', count: '0', sum: '0', hasRecipe: false, unavailable: true }])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'unavailable', changes: [
+        { kind: 'plan', id: 'p1', value: { id: 'p1', confirmed: true } },
+        { kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1', recipeId: 'r1' } },
+      ],
+    }) }))
+    expect(response.status).toBe(400)
+  })
+
+  it.each([
+    { rule: { constrained: true }, label: 'unknown constrained effort' },
+    { rule: { handsOff: true }, label: 'missing slow-cooker recipe' },
+  ])('rejects confirmation with $label', async ({ rule }) => {
+    mockAffected([
+      { seq: 1, kind: 'settings', id: 'settings', value: { diners: [], hardRestrictions: [], scheduleExceptions: [{ id: 'night1', date: '2026-09-27', ...rule }] } },
+      { seq: 2, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true } },
+    ], [{ mealId: 'm1', count: '0', sum: '0', hasRecipe: false }])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'capacity', changes: [
+        { kind: 'plan', id: 'p1', value: { id: 'p1', confirmed: true } },
+        { kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1' } },
+      ],
+    }) }))
+    expect(response.status).toBe(400)
+  })
+
+  it('allows a valid linked leftover on a hands-off night', async () => {
+    mockAffected([
+      { seq: 1, kind: 'settings', id: 'settings', value: { diners: [], hardRestrictions: [], scheduleExceptions: [{ id: 'night1', date: '2026-09-28', handsOff: true }] } },
+      { seq: 2, kind: 'meal', id: 'm1', value: { id: 'm1', name: 'Pasta', active: true, recipeIds: ['r1'] } },
+      { seq: 3, kind: 'recipe', id: 'r1', value: { id: 'r1', title: 'Pasta' } },
+    ], [{ mealId: 'm1', recipeId: 'r1', count: '0', sum: '0', hasRecipe: false }, { mealId: 'm1', count: '0', sum: '0', hasRecipe: false }])
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'leftover-night', changes: [
+        { kind: 'plan', id: 'p1', value: { id: 'p1', confirmed: true } },
+        { kind: 'slot', id: 's1', planId: 'p1', position: 0, value: { id: 's1', date: '2026-09-27', mealId: 'm1', recipeId: 'r1' } },
+        { kind: 'slot', id: 's2', planId: 'p1', position: 1, value: { id: 's2', date: '2026-09-28', mealId: 'm1', leftoverFromSlotId: 's1' } },
+      ],
+    }) }))
+    expect(response.status).toBe(200)
   })
 
   it('rejects replacement of an existing outcome', async () => {
