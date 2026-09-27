@@ -32,6 +32,14 @@ describe('record API', () => {
     expect(rpc).not.toHaveBeenCalled()
   })
 
+  it('returns 400 when a change omits its value', async () => {
+    const response = await handler.fetch(new Request('https://dinner.example/api/records', { method: 'POST', headers, body: JSON.stringify({
+      householdId, expectedRevision: 0, idempotencyKey: 'once', changes: [{ kind: 'meal', id: 'm1' }],
+    }) }))
+    expect(response.status).toBe(400)
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
   it('replays a stale request through the membership-checked write RPC', async () => {
     rpc.mockResolvedValueOnce({ data: { status: 409 }, error: null })
       .mockResolvedValueOnce({ data: { status: 200, revision: 1 }, error: null })

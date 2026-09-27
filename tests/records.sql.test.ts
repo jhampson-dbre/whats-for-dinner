@@ -33,6 +33,17 @@ describe('household record migrations', () => {
       expect((await read(1)).records).toHaveLength(1)
       expect((await read(0)).status).toBe(409)
       expect((await write([household, actor, 0, 'different', 'b'.repeat(64), JSON.stringify(changes)])).status).toBe(409)
+      const invalidBatch = [
+        { kind: 'meal', id: 'm2', value: { id: 'm2', name: 'Soup', active: true } },
+        { kind: 'unknown', id: 'm3', value: { id: 'm3' } },
+      ]
+      expect((await write([household, actor, 1, 'partial', 'c'.repeat(64), JSON.stringify(invalidBatch)])).status).toBe(400)
+      expect((await read(1)).records).toHaveLength(1)
+      const oversized = [{ kind: 'meal', id: 'large', value: { id: 'large', name: 'x'.repeat(32768), active: true } }]
+      expect((await write([household, actor, 1, 'large', 'd'.repeat(64), JSON.stringify(oversized)])).status).toBe(413)
+      expect((await read(1)).records).toHaveLength(1)
+      expect((await write([household, actor, 1, 'null', 'e'.repeat(64), null])).status).toBe(400)
+      expect((await read(1)).records).toHaveLength(1)
       await db.query('delete from public.household_memberships where household_id=$1 and user_id=$2', [household, actor])
       expect((await write(args)).status).toBe(403)
       expect((await read(1)).status).toBe(403)

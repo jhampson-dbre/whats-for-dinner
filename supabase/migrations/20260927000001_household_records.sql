@@ -88,21 +88,27 @@ begin
     return jsonb_build_object('status', 409);
   end if;
   if current_revision <> p_expected_revision then return jsonb_build_object('status', 409); end if;
-  if p_key is null or length(p_key) not between 1 and 128 or p_digest !~ '^[a-f0-9]{64}$'
-    or jsonb_typeof(p_changes) <> 'array' or jsonb_array_length(p_changes) not between 1 and 100 then
+  if p_key is null or length(p_key) not between 1 and 128 or p_digest is null or p_digest !~ '^[a-f0-9]{64}$'
+    or jsonb_typeof(p_changes) is distinct from 'array' then
+    return jsonb_build_object('status', 400);
+  end if;
+  if jsonb_array_length(p_changes) not between 1 and 100 then
     return jsonb_build_object('status', 400);
   end if;
   if octet_length(p_changes::text) > 262144 then return jsonb_build_object('status', 413); end if;
 
   for changed in select value from jsonb_array_elements(p_changes) with ordinality as entry(value, ordinal) order by ordinal loop
-    if changed->>'kind' not in ('settings', 'meal', 'recipe', 'plan', 'slot', 'shopping-item', 'repair', 'outcome', 'leftover-lot')
-      or changed->>'id' !~ '^[A-Za-z0-9_-]{1,128}$'
-      or jsonb_typeof(changed->'value') <> 'object'
+    if changed->>'kind' is null or changed->>'kind' not in ('settings', 'meal', 'recipe', 'plan', 'slot', 'shopping-item', 'repair', 'outcome', 'leftover-lot')
+      or changed->>'id' is null or changed->>'id' !~ '^[A-Za-z0-9_-]{1,128}$'
+      or jsonb_typeof(changed->'value') is distinct from 'object'
       or changed->'value'->>'id' is distinct from changed->>'id' and changed->>'kind' <> 'settings'
-      or octet_length((changed->'value')::text) > 32768
       or (changed->>'kind' in ('slot', 'shopping-item', 'repair')) <> (changed ? 'planId' and changed ? 'position') then
       return jsonb_build_object('status', 400);
     end if;
+    if octet_length((changed->'value')::text) > 32768 then return jsonb_build_object('status', 413); end if;
+  end loop;
+
+  for changed in select value from jsonb_array_elements(p_changes) with ordinality as entry(value, ordinal) order by ordinal loop
     insert into public.household_records (household_id, kind, record_id, plan_id, position, value)
     values (p_household_id, changed->>'kind', changed->>'id', changed->>'planId', (changed->>'position')::integer, changed->'value')
     on conflict (household_id, kind, record_id) do update
