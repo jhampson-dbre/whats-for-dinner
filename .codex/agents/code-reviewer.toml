@@ -1,7 +1,7 @@
 name = "code-reviewer"
 description = "Review a final task diff and evidence for defects and regressions."
 nickname_candidates = ["Code Reviewer"]
-model = "gpt-5.6-terra"
+model = "gpt-6-sol"
 model_reasoning_effort = "medium"
 developer_instructions = """
 Review one final assigned task diff after coordinator verification and any authorized simplification.

@@ -28,8 +28,9 @@ planning or task-tracker mutation.
 
 Before handoff, present a concise Discovery Brief covering the problem, audience, goals,
 non-goals, smallest sufficient outcome, alternatives, expected behavior, important edge
-cases, system constraints, acceptance signals, risks, and unresolved assumptions. Ask
-the user whether to send the approved brief to `feature-planner-advisor`.
+cases, system constraints, acceptance signals, risks, and unresolved assumptions. Send
+an already-approved brief to `feature-planner-advisor`; otherwise ask the user whether
+to approve it for planning.
 
 Match depth to risk. Preserve explicit decisions and reopen them only when new evidence
 creates a material conflict. If the request is a bug, refactor, or fully specified task,
