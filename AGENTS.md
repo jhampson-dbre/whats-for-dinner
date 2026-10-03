@@ -23,13 +23,15 @@ gates, validators, or review routing.
   Subagents report suggested tracker comments and commit messages only.
 - If `.trekker` exists, use Trekker as the durable source of task state. If it does not
   exist and persistent tracking would help, ask before running `trekker init`.
-- Keep tasks open until a created pull request contains their final verified
-  deliverables. Draft PRs count; merge is not required. Record the PR URL in each
-  completion summary before marking the task completed. Until then, leave a
-  `Checkpoint:` describing local verification and the pending PR. Verified local
-  evidence may satisfy implementation dependencies without closing the task; unmet
-  approval or publication prerequisites still block. This rule does not authorize
-  external writes or reopen tasks completed before it was adopted.
+- Finish each delivery unit with a pull request containing its final verified
+  deliverables: a single-task branch or the agreed scope of a multi-task/epic branch.
+  Keep a standalone task and its branch, or the encompassing epic and its branch,
+  open until that PR exists. Draft PRs count; merge is not required. Constituent
+  tasks on a multi-task/epic branch may close after their scope is verified, reviewed
+  and committed, with a `Summary:` tied to the commit and evidence, so dependencies
+  can progress. Record the PR URL when closing the delivered unit. If publication
+  is deferred or fails, leave a `Checkpoint:` and keep the unit open. Do not reopen
+  tasks completed before this rule was adopted.
 - Dispatch packets name the goal, accepted scope, files, dirty-worktree notes,
   constraints, verification, success criteria, and expected output.
 - Stop and escalate a material product, architecture, data, auth, migration, scope, or
@@ -80,8 +82,12 @@ gates, validators, or review routing.
 - Before closing a multi-task branch, run independent cumulative `epic-reviewer` and
   `spec-reviewer` reviews of the committed merge-base range. An unchanged single-task
   branch may reuse accepted task-completion evidence.
-- Use `$epic-development-branch-completion` for branch handoff. Push, open a pull request,
-  merge, or perform any other external write only when the user explicitly asks.
+- Use `$epic-development-branch-completion` for both single-task and multi-task/epic
+  branch handoff. Authorized repository work includes committing, pushing its focused
+  branch and opening or updating a draft PR after required verification and review,
+  unless the user explicitly opts out or requests local-only work. Local readiness is
+  a checkpoint, not the delivery outcome. Merge, deployment and other external writes
+  still require explicit user authorization.
 
 ## Roles
 
