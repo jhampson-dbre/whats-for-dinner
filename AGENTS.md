@@ -23,6 +23,13 @@ gates, validators, or review routing.
   Subagents report suggested tracker comments and commit messages only.
 - If `.trekker` exists, use Trekker as the durable source of task state. If it does not
   exist and persistent tracking would help, ask before running `trekker init`.
+- Keep tasks open until a created pull request contains their final verified
+  deliverables. Draft PRs count; merge is not required. Record the PR URL in each
+  completion summary before marking the task completed. Until then, leave a
+  `Checkpoint:` describing local verification and the pending PR. Verified local
+  evidence may satisfy implementation dependencies without closing the task; unmet
+  approval or publication prerequisites still block. This rule does not authorize
+  external writes or reopen tasks completed before it was adopted.
 - Dispatch packets name the goal, accepted scope, files, dirty-worktree notes,
   constraints, verification, success criteria, and expected output.
 - Stop and escalate a material product, architecture, data, auth, migration, scope, or

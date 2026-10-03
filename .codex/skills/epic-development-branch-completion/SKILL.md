@@ -5,7 +5,7 @@ description: Finish a multi-task development branch for local integration review
 
 # Epic Development-Branch Completion
 
-Use this coordinator-owned workflow after intended tasks are complete. It does not
+Use this coordinator-owned workflow after intended task work is locally verified. It does not
 replace task-level verification or authorize reviewers to update tracking, commit,
 push, merge, or create a pull request.
 
@@ -16,7 +16,7 @@ push, merge, or create a pull request.
 3. Inspect `git status --short --branch`, `git diff`, and `git diff --cached`. Commit any
    omitted in-scope change before review. Preserve unrelated residue and exclude it
    from reviewer scope.
-4. Confirm completed tracked tasks have summaries tied to their commit and verification.
+4. Confirm each intended task has evidence tied to its deliverable's commit and verification.
 
 ## 2. Select routing
 
@@ -39,4 +39,9 @@ record a Checkpoint and escalate.
 
 When local evidence is ready, report the branch, range, reviews, checks, and concrete
 remaining risks. Push, open a pull request, or merge only when the user explicitly asks.
+If publication is not authorized, leave a task checkpoint with the verified work and
+pending handoff. Once authorized, push the reviewed commits, create or update the PR,
+and confirm it contains the final task deliverables. Apply the `AGENTS.md` completion
+gate: include the PR URL in each task summary before updating its status, and close
+only tasks whose scope and required verification are satisfied.
 The coordinator retains task-tracker writes and final user communication.
