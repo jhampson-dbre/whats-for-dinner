@@ -14,15 +14,17 @@ Open `docs/prototypes/production-ui/index.html` through the existing Vite develo
 
 | Destination | Primary job | Consequential action and preserved context |
 | --- | --- | --- |
-| Plan | Review seven dinners, schedule capacity, and leftover links | Week confirmation follows a review; dinner repair carries explicit plan/slot identity and the household revision captured by its preview |
+| Plan | Review seven dinners, edit each date's cooking availability, and inspect leftover links | Dated availability edits keep the meal for review and invalidate stale previews; week confirmation and dinner repair carry explicit plan/slot identity and the household revision |
 | Shop | Check known ingredients and record partial availability | Shopping confirmation distinguishes checked, unchecked, unavailable, and incomplete ingredients; a recorded shopping snapshot is retained |
 | Today | Complete the selected dinner and handle changed plans | A unique confirmed date match can lead; ambiguous matches require plan choice; completion supports timing or no timing |
 | Recipes/detail | Search meals and read a complete preparation method | Meal/recipe identity remains distinct; name-only information stays unknown; hard-restriction compatibility requires an explicit household assertion |
-| Household | Maintain diners, hard restrictions, household capacity, and member invitations | Restriction/capacity changes require review of affected dinners; invitations are email-bound and creator-managed in the release contract |
+| Household | Maintain diners, hard restrictions, and member invitations | Restriction changes require review of affected dinners; invitations are email-bound and creator-managed in the release contract |
 
 ## Planning and shopping
 
-The first view is a dated list, rather than a gallery of equal-weight meal cards. Every cooking row names the meal and known hands-on effort; hands-off and quick-cook exceptions appear beside the affected dinner. Leftover serving names its source and has no second cooking timer. Takeout is visibly a household choice.
+The first view is a dated list, rather than a gallery of equal-weight meal cards. Every cooking row names the meal and known hands-on effort. Each date has its own editable cooking availability directly in Plan: `Hands-on`, `Quick-cook` (up to 30 minutes of known hands-on effort), or `Hands-off`. Hands-on is the existing unconstrained normal-night mode; it does not invent a preparation-time limit. Leftover serving names its source and has no second cooking timer. Takeout is visibly a household choice.
+
+Changing a date's cooking availability keeps the current dinner, leftover links, shopping commitments, and history. The control applies to that explicit plan and slot, increments the household revision on an actual change, and flags a dinner that no longer fits. An unchanged selection does not increment the revision. Select `Change` to choose a fitting replacement, then inspect the existing protected meal and dependency review before confirming. Completed dinners keep their recorded availability; pending saves and lost access prevent new edits. Dated cooking availability is no longer edited in Household.
 
 The readiness column and phone action dock lead from reviewing the week to confirming it and then shopping. Grocery content is grounded in the selected cooking recipes. Leftover servings do not duplicate cooking ingredients, and name-only meals do not invent a list. Ambiguous quantities stay separate.
 
@@ -36,7 +38,7 @@ The sample library includes several confirmed slow-cooker meals, quick meals, a 
 | --- | --- |
 | Hands-off alternatives | On Thursday, choose `Change` to compare chili, chickpea & spinach curry, and chicken & white bean stew. Review a swap to inspect its actual grocery additions and removals before confirming. |
 | Quick dinner and dependent leftovers | On Monday, choose a quick fried rice or couscous dinner. Its review also shows the required Tuesday replacement because Monday's original leftover source is removed. |
-| A longer cooking night | Roast vegetable lasagne is available on normal nights such as Wednesday, but excluded from Monday's quick-cook and Thursday's hands-off choices. |
+| A longer cooking night | Roast vegetable lasagne is available on hands-on nights such as Wednesday, but excluded from Monday's initial quick-cook and Thursday's hands-off choices. Changing Monday to Hands-on makes it eligible there. |
 | Compatibility awaiting confirmation | Creamy slow-cooker chicken appears in Recipes as needing review and is excluded from dinner choices until the household explicitly confirms compatibility. Its title or ingredients do not certify it. |
 | Incomplete meal information | Sandwich night remains a name-only meal needing review. Confirming compatibility makes it available on a normal night; constrained-night capacity and groceries stay unknown. |
 

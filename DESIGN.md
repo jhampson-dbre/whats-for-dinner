@@ -193,7 +193,7 @@ The app frame uses a cobalt rail beside a centered work area. The full desktop r
 
 At the medium breakpoint (1180px), the rail narrows (212px) and readiness moves below the main content. At the phone breakpoint (760px), the rail becomes a compact brand header and the same five task destinations become a persistent bottom navigation. Work content uses phone gutters (20px) and enough bottom padding (170px) for the navigation and action dock. The Plan and Shop dock keeps the next action above navigation and includes safe-area spacing.
 
-Related entries live inside paper groups. Dated dinner rows have a date column, flexible content, and a text action; their spacing tightens on phone while notes wrap. Household and recipe-detail columns become one stack. The spacing scale supplies small label gaps, comfortable control groups, surface padding, and large separation between sections; observed intermediate values serve specific rows and headings rather than adding a second spacing scale.
+Related entries live inside paper groups. Dated dinner rows have a date column, flexible content, a labeled cooking-availability select, and a text action; their spacing tightens on phone while notes wrap. Household and recipe-detail columns become one stack. The spacing scale supplies small label gaps, comfortable control groups, surface padding, and large separation between sections; observed intermediate values serve specific rows and headings rather than adding a second spacing scale.
 
 **The Grouped Rows Rule.** Related dinners, groceries, recipes, and household records share a group; dividers organize entries inside it.
 
@@ -219,7 +219,7 @@ Regular controls have a minimum height (44px). Disabled buttons retain their lab
 
 ### Chips
 
-Capacity and compatibility badges are compact, noninteractive text labels. Periwinkle is neutral; green and ochre variants pair state text with their corresponding ground. They do not acquire button behavior or hover treatments.
+Capacity badges on Today and compatibility badges are compact, noninteractive text labels. Periwinkle is neutral; green and ochre variants pair state text with their corresponding ground. They do not acquire button behavior or hover treatments. Plan uses a labeled native select for editable dated cooking availability, rather than making a badge behave like a control.
 
 ### Cards / Containers
 
@@ -243,7 +243,7 @@ Saved, pending, and failed messages occupy the same status position below the he
 
 ### Dated rows and grocery rows
 
-The date column anchors a dinner's label, practical effort or leftover note, capacity badge, and change/history action. A grocery row pairs a native checkbox with the ingredient name, meal provenance, and unavailable-item action. Checked groceries gain a strike-through and muted name as well as the checked control. These are recurring record patterns, not separate decorative tiles.
+The date column anchors a dinner's label, practical effort or leftover note, cooking-availability select, and change/history action. Every Plan date offers Hands-on, Quick-cook, and Hands-off, including dates that previously had no capacity badge. Completed records disable this control. Local mismatch guidance connects a changed setting to the dinner's Change action; protected meal reviews still show required leftover and grocery effects. Household keeps shared diners, restrictions, and access, while dated availability belongs to Plan. A grocery row pairs a native checkbox with the ingredient name, meal provenance, and unavailable-item action. Checked groceries gain a strike-through and muted name as well as the checked control. These are recurring record patterns, not separate decorative tiles.
 
 ## Do's and Don'ts
 

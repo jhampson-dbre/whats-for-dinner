@@ -108,6 +108,8 @@ main { min-width: 0; width: 100%; max-width: 1220px; margin: 0 auto; padding: 46
 .row-notes { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: .8rem; color: var(--color-secondary); }
 .capacity { display: inline-flex; gap: 5px; align-items: center; margin-top: 9px; padding: 3px 8px; border-radius: 4px; background: var(--color-periwinkle); font-size: .75rem; font-weight: 650; }
 .capacity.leftover { color: var(--color-success); background: var(--color-success-ground); }
+.capacity-control { max-width: 260px; margin-top: 12px; }
+.capacity-mismatch { margin: 10px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--color-warning-ground); color: var(--color-warning); font-size: .875rem; }
 .row-action { font-size: .85rem; align-self: start; min-height: 40px; padding: 0 2px; }
 .source-link { display: block; margin-top: 6px; font-size: .8rem; color: var(--color-success); }
 .readiness { padding-top: 12px; }

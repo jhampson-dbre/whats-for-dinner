@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createDemoState, eligible, previewMealChange, previewCorrection, confirmPreview, todaySelection, groceryItems, groceryEffect, recordFeedback, readiness } from '../docs/prototypes/production-ui/prototype.js';
+import { createDemoState, eligible, changeCapacity, previewMealChange, previewCorrection, confirmPreview, todaySelection, groceryItems, groceryEffect, recordFeedback, readiness } from '../docs/prototypes/production-ui/prototype.js';
 
 const today = createDemoState();
 assert.equal(todaySelection(today), null, 'unconfirmed date has no Today dinner');
@@ -44,6 +44,48 @@ assert.throws(() => previewMealChange(alternatives, 'plan-week', 'slot-3', cream
 creamy.safe = true;
 assert(eligible(alternatives, creamy, thursday), 'explicit compatibility confirmation enables the hands-off meal');
 assert.equal(previewMealChange(alternatives, 'plan-week', 'slot-3', creamy.id).changes[0].after, creamy.id);
+
+const capacityState = createDemoState();
+const capacityBefore = structuredClone(capacityState.plans);
+const capacityGroceries = groceryItems(capacityState);
+const priorPreview = previewMealChange(capacityState, 'plan-week', 'slot-0', 'stir-fry');
+const capacityRevision = capacityState.revision;
+assert.deepEqual(changeCapacity(capacityState, 'plan-week', 'slot-0', 'quick', capacityRevision), { ok: true, changed: false });
+assert.equal(capacityState.revision, capacityRevision, 'same availability is a no-op');
+assert.deepEqual(changeCapacity(capacityState, 'plan-week', 'slot-0', 'hands-off', capacityRevision), { ok: true, changed: true });
+assert.equal(capacityState.revision, capacityRevision + 1);
+assert.equal(capacityState.plans[0].slots[0].capacity, 'hands-off');
+assert.equal(capacityState.plans[0].slots[0].mealId, 'fajitas', 'current meal stays visible until repaired');
+assert.equal(capacityState.plans[0].slots[1].sourceId, 'slot-0', 'leftover dependency stays linked');
+assert.deepEqual(groceryItems(capacityState), capacityGroceries, 'availability does not alter shopping');
+assert.deepEqual(capacityState.plans[0].shopping, capacityBefore[0].shopping, 'shopping history stays fixed');
+assert.equal(readiness(capacityState).capacity, false, 'Monday now needs a fitting dinner');
+assert.equal(confirmPreview(capacityState, priorPreview).ok, false, 'old dinner preview becomes stale');
+const capacityRepair = previewMealChange(capacityState, 'plan-week', 'slot-0', 'chili');
+assert.deepEqual(capacityRepair.changes.map((change) => change.slotId), ['slot-0', 'slot-1']);
+assert.equal(confirmPreview(capacityState, capacityRepair).ok, true);
+assert.equal(readiness(capacityState).capacity, true);
+
+const relaxed = createDemoState();
+assert.deepEqual(changeCapacity(relaxed, 'plan-week', 'slot-0', 'normal', relaxed.revision), { ok: true, changed: true });
+assert(eligible(relaxed, relaxed.meals.find((meal) => meal.id === 'roast-vegetable-lasagne'), relaxed.plans[0].slots[0]), 'hands-on allows longer meals');
+const guarded = createDemoState();
+guarded.plans.push({ ...structuredClone(guarded.plans[0]), id: 'other-plan' });
+const guardedRevision = guarded.revision;
+assert.equal(changeCapacity(guarded, 'other-plan', 'slot-2', 'quick', guardedRevision).ok, true);
+assert.equal(guarded.plans[0].slots[2].capacity, 'normal', 'other plan stays fixed');
+assert.equal(guarded.plans[1].slots[2].capacity, 'quick', 'explicit plan receives change');
+assert.equal(changeCapacity(guarded, 'other-plan', 'slot-3', 'normal', guardedRevision).ok, false, 'stale control cannot apply');
+assert.equal(changeCapacity(guarded, 'missing-plan', 'slot-3', 'normal', guarded.revision).ok, false, 'missing plan cannot apply');
+assert.equal(changeCapacity(guarded, 'other-plan', 'missing-slot', 'normal', guarded.revision).ok, false, 'missing date cannot apply');
+assert.equal(changeCapacity(guarded, 'other-plan', 'slot-3', 'unknown', guarded.revision).ok, false, 'unknown availability cannot apply');
+guarded.plans[1].slots[3].completed = true;
+assert.equal(changeCapacity(guarded, 'other-plan', 'slot-3', 'normal', guarded.revision).ok, false, 'completed dinner stays historical');
+guarded.saveState = 'pending';
+assert.equal(changeCapacity(guarded, 'other-plan', 'slot-4', 'quick', guarded.revision).ok, false, 'pending save blocks edits');
+guarded.saveState = 'saved';
+guarded.access = false;
+assert.equal(changeCapacity(guarded, 'other-plan', 'slot-4', 'quick', guarded.revision).ok, false, 'revoked access blocks edits');
 
 const thursdaySwap = createDemoState();
 const beforeThursday = structuredClone(thursdaySwap.plans[0].slots);
