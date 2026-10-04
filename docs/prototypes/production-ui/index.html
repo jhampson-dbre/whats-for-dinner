@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#1c4595" />
+    <title>What's for Dinner? · Community noticeboard prototype</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./prototype.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="prototype-bar">
+      <span>Interactive prototype <span class="demo-label">Sample household data</span></span>
+      <details id="situations">
+        <summary>Try a situation</summary>
+        <div class="situation-panel">
+          <label for="scenario">Situation</label>
+          <select id="scenario">
+            <option value="week">Planning a week</option>
+            <option value="shopping">Shopping a confirmed week</option>
+            <option value="cooking">Cooking today's dinner</option>
+            <option value="feedback">Recording dinner feedback</option>
+            <option value="broken">Leftovers didn't cover dinner</option>
+            <option value="multiple">Two plans match today</option>
+            <option value="no-plan">No plan for today</option>
+            <option value="empty">An empty household</option>
+            <option value="invite">Accepting an invitation</option>
+            <option value="loading">Loading the household</option>
+            <option value="pending">Saving changes</option>
+            <option value="failed">A failed save</option>
+            <option value="conflict">Someone else changed the week</option>
+            <option value="revoked">Household access ended</option>
+            <option value="library">A large recipe library</option>
+            <option value="source-correction">Correcting a leftover source</option>
+          </select>
+          <button class="button secondary" id="reset-demo" type="button">Reset sample data</button>
+          <p>These situations simulate the planned UI. Nothing is sent or saved to a real household.</p>
+        </div>
+      </details>
+    </div>
+    <div class="app-shell">
+      <aside class="app-rail">
+        <a class="brand" href="#plan">What's <br />for Dinner<span>?</span></a>
+        <div class="household-name">The sample household</div>
+        <nav id="navigation" aria-label="Main navigation"></nav>
+        <p class="rail-note">One shared dinner.<br />Room for plans to change.</p>
+      </aside>
+      <main id="main" tabindex="-1"></main>
+    </div>
+    <div id="announcement" class="toast" role="status" aria-live="polite"></div>
+    <dialog id="confirmation" aria-labelledby="dialog-title">
+      <div id="dialog-content"></div>
+    </dialog>
+  </body>
+</html>
