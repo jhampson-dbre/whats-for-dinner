@@ -37,14 +37,15 @@ export function createDemoState() {
   const ids = ['fajitas', 'fajitas', 'lemon-chicken', 'chili', 'tomato-pasta', 'takeout', 'salmon'];
   return {
     meals: structuredClone(sampleMeals), diners: ['Alex', 'Robin', 'Lee'], restrictions: ['Dairy-free · Alex'],
-    plans: [{ id: 'plan-week', name: '5–11 October', confirmed: false, slots: ids.map((mealId, i) => ({ id: `slot-${i}`, day: names[i], date: `2026-10-${String(5 + i).padStart(2, '0')}`, mealId, capacity: i === 1 || i === 3 ? 'hands-off' : i === 0 ? 'quick' : 'normal', sourceId: i === 1 ? 'slot-0' : null, completed: false, elapsed: null, feedback: null })) }],
+    plans: [{ id: 'plan-week', name: '5–11 October', confirmed: false, slots: ids.map((mealId, i) => ({ id: `slot-${i}`, day: names[i], date: `2026-10-${String(5 + i).padStart(2, '0')}`, mealId, capacity: i === 1 || i === 3 ? 'hands-off' : i === 0 ? 'quick' : 'normal', sourceId: i === 1 ? 'slot-0' : null, completed: false, elapsed: null, feedback: null })), shopping: { confirmed: false, checkedItems: [], unavailable: [], snapshot: null, history: [] } }],
     selectedPlanId: 'plan-week', revision: 8, repairs: [], corrections: [], view: 'plan', recipeId: null, query: '', category: 'All',
-    saveState: 'saved', access: true, shoppingConfirmed: false, checkedItems: [], unavailable: [], editSlotId: null,
+    saveState: 'saved', access: true, editSlotId: null,
     preview: null, broken: false, todayChoice: null, sampleDate: '2026-10-05', historyTarget: null, empty: false, showMealForm: false, showFeedback: false,
-    inviteStep: 0, invitation: false, loading: false, largeLibrary: false, visibleMeals: 12, message: '', shoppingSnapshot: null, shoppingHistory: [],
+    inviteStep: 0, invitation: false, loading: false, largeLibrary: false, visibleMeals: 12, message: '',
   };
 }
 const currentPlan = (s) => s.plans.find((item) => item.id === s.selectedPlanId);
+const shoppingFor = (s, planId = s.selectedPlanId) => s.plans.find((item) => item.id === planId).shopping;
 const mealFor = (s, id) => s.meals.find((item) => item.id === id);
 export function todaySelection(s) {
   if (s.historyTarget) {
@@ -67,6 +68,7 @@ export function previewMealChange(s, planId, slotId, mealId) {
   const plan = s.plans.find((item) => item.id === planId);
   const slot = plan?.slots.find((item) => item.id === slotId);
   if (!slot || slot.completed) throw Error('Completed dinners stay fixed. Use a correction instead.');
+  if (!slot.sourceId && slot.mealId === mealId) return null;
   if (mealId !== 'takeout' && !eligible(s, mealFor(s, mealId), slot)) throw Error('This dinner needs confirmed compatibility and must fit this date’s capacity.');
   const changes = [{ slotId, before: slot.mealId, after: mealId, sourceId: null }, ...dependentChanges(s, plan, slot)];
   return { type: 'repair', planId, expectedRevision: s.revision, changes };
@@ -93,6 +95,7 @@ export function confirmPreview(s, preview) {
   const plan = s.plans.find((item) => item.id === preview.planId);
   if (!plan) return { ok: false, reason: 'Choose the plan again before confirming.' };
   if (preview.type === 'repair' || preview.type === 'correction') {
+    const shopping = shoppingFor(s, preview.planId);
     const effect = groceryEffect(s, preview);
     const shoppingChanged = effect.added.length || effect.removed.length;
     for (const change of preview.changes) {
@@ -101,9 +104,9 @@ export function confirmPreview(s, preview) {
     }
     for (const change of preview.changes) Object.assign(plan.slots.find((item) => item.id === change.slotId), { mealId: change.after, sourceId: change.sourceId });
     const currentIds = new Set(groceryItems(s, preview.planId).map((item) => item.id));
-    s.checkedItems = s.checkedItems.filter((id) => currentIds.has(id));
-    s.unavailable = s.unavailable.filter((id) => currentIds.has(id));
-    if (shoppingChanged) s.shoppingConfirmed = false;
+    shopping.checkedItems = shopping.checkedItems.filter((id) => currentIds.has(id));
+    shopping.unavailable = shopping.unavailable.filter((id) => currentIds.has(id));
+    if (shoppingChanged) shopping.confirmed = false;
     s.repairs.push(structuredClone(preview));
     if (preview.type === 'correction') {
       const slot = plan.slots.find((item) => item.id === preview.slotId);
@@ -203,13 +206,14 @@ function planView() {
 function shopView() {
   if (!currentPlan(state)?.confirmed) return heading('Shopping', 'Start with a confirmed week.') + `<section class="empty-state"><h2>Your list follows your plan</h2><p>Review and confirm the seven dinners first. Then the list uses their known ingredients and leaves incomplete meals for you to review.</p>${action('Review the week', 'go-plan')}</section>`;
   const items = groceries();
-  const checked = state.checkedItems.length;
+  const shopping = shoppingFor(state);
+  const checked = shopping.checkedItems.length;
   const missing = incompleteMeals();
   return heading('Shopping', `${currentPlan(state).name} · ${checked} of ${items.length} known items checked`) + planChoice() + saveBar() +
     (missing.length ? `<section class="alert"><h2>Some meals have no ingredient list</h2><p>${missing.map((slot) => esc(titleFor(slot.mealId))).join(', ')}. No ingredients have been guessed. Review these meals separately before confirming shopping.</p>${action('Review the week', 'go-plan', 'secondary')}</section>` : '') +
-    (state.shoppingConfirmed ? `<section class="alert"><h2>Shopping is confirmed</h2><p>${state.unavailable.length ? 'Unavailable items remain recorded. Dinners that use them need a confirmed repair.' : 'These shopping commitments stay with the week. A dinner change will preview the grocery effects.'}</p>${state.unavailable.length ? action('Review affected dinners', 'shopping-repair', 'secondary') : ''}</section>` : state.shoppingSnapshot ? '<section class="alert"><h2>Updated list needs confirmation</h2><p>A dinner changed after shopping was confirmed. New ingredients are unchecked; the earlier shopping record is retained below.</p></section>' : '') +
-    (state.shoppingSnapshot ? `<details class="surface"><summary>Confirmed shopping history</summary>${(state.shoppingHistory.length ? state.shoppingHistory : [state.shoppingSnapshot]).map((snapshot, i) => `<h3>Confirmation ${i + 1}</h3><ul class="changes">${snapshot.map((item) => `<li>${esc(item.name)}<small>${esc(item.meals.join(' · '))} · ${item.unavailable ? 'Unavailable' : item.checked ? 'Checked' : 'Unchecked'}</small></li>`).join('')}</ul>`).join('')}</details>` : '') +
-    `<div class="shop-layout"><section class="surface" aria-labelledby="grocery-heading"><div class="grocery-group"><h2 id="grocery-heading">Known ingredients</h2>${items.map((item) => `<div class="grocery-row ${state.checkedItems.includes(item.id) ? 'checked' : ''}"><label class="check-label"><input type="checkbox" data-item="${item.id}" ${state.checkedItems.includes(item.id) ? 'checked' : ''} ${state.shoppingConfirmed ? 'disabled' : ''} /><span><span class="item-name">${esc(item.name)}</span><small>For ${[...new Set(item.meals)].map(esc).join(' · ')}</small></span></label>${action(state.unavailable.includes(item.id) ? 'Unavailable' : 'Not available?', 'unavailable', 'text-button', `data-item="${item.id}" ${state.shoppingConfirmed ? 'disabled' : ''}`)}</div>`).join('')}</div></section><aside class="readiness"><h2>Bring the week home</h2><p>Check what you have or have bought. Mark anything unavailable so the household can choose a dinner repair.</p>${action(state.shoppingConfirmed ? 'Go to Today' : 'Confirm shopping', state.shoppingConfirmed ? 'go-today' : 'confirm-shopping', 'primary')}<p class="small">Ambiguous quantities stay separate. Leftover servings don't add another set of cooking ingredients.</p></aside></div><div class="action-dock"><small>${checked} of ${items.length} checked</small>${action(state.shoppingConfirmed ? 'Go to Today' : 'Confirm shopping', state.shoppingConfirmed ? 'go-today' : 'confirm-shopping', 'primary')}</div>`;
+    (shopping.confirmed ? `<section class="alert"><h2>Shopping is confirmed</h2><p>${shopping.unavailable.length ? 'Unavailable items remain recorded. Dinners that use them need a confirmed repair.' : 'These shopping commitments stay with the week. A dinner change will preview the grocery effects.'}</p>${shopping.unavailable.length ? action('Review affected dinners', 'shopping-repair', 'secondary') : ''}</section>` : shopping.snapshot ? '<section class="alert"><h2>Updated list needs confirmation</h2><p>A dinner changed after shopping was confirmed. New ingredients are unchecked; the earlier shopping record is retained below.</p></section>' : '') +
+    (shopping.snapshot ? `<details class="surface"><summary>Confirmed shopping history</summary>${shopping.history.map((snapshot, i) => `<h3>Confirmation ${i + 1}</h3><ul class="changes">${snapshot.map((item) => `<li>${esc(item.name)}<small>${esc(item.meals.join(' · '))} · ${item.unavailable ? 'Unavailable' : item.checked ? 'Checked' : 'Unchecked'}</small></li>`).join('')}</ul>`).join('')}</details>` : '') +
+    `<div class="shop-layout"><section class="surface" aria-labelledby="grocery-heading"><div class="grocery-group"><h2 id="grocery-heading">Known ingredients</h2>${items.map((item) => `<div class="grocery-row ${shopping.checkedItems.includes(item.id) ? 'checked' : ''}"><label class="check-label"><input type="checkbox" data-item="${item.id}" ${shopping.checkedItems.includes(item.id) ? 'checked' : ''} ${shopping.confirmed ? 'disabled' : ''} /><span><span class="item-name">${esc(item.name)}</span><small>For ${[...new Set(item.meals)].map(esc).join(' · ')}</small></span></label>${action(shopping.unavailable.includes(item.id) ? 'Unavailable' : 'Not available?', 'unavailable', 'text-button', `data-item="${item.id}" ${shopping.confirmed ? 'disabled' : ''}`)}</div>`).join('')}</div></section><aside class="readiness"><h2>Bring the week home</h2><p>Check what you have or have bought. Mark anything unavailable so the household can choose a dinner repair.</p>${action(shopping.confirmed ? 'Go to Today' : 'Confirm shopping', shopping.confirmed ? 'go-today' : 'confirm-shopping', 'primary')}<p class="small">Ambiguous quantities stay separate. Leftover servings don't add another set of cooking ingredients.</p></aside></div><div class="action-dock"><small>${checked} of ${items.length} checked</small>${action(shopping.confirmed ? 'Go to Today' : 'Confirm shopping', shopping.confirmed ? 'go-today' : 'confirm-shopping', 'primary')}</div>`;
 }
 function todayView() {
   const matches = state.plans.filter((p) => p.confirmed).flatMap((plan) => plan.slots.filter((slot) => slot.date === state.sampleDate).map((slot) => ({ plan, slot })));
@@ -263,9 +267,10 @@ function dinnerName(slot, mealId = slot.mealId) {
 }
 function groceryPreview(preview) {
   const effect = groceryEffect(state, preview);
-  const items = (list) => list.length ? `<ul class="changes">${list.map((item) => `<li>${esc(item.name)}<small>${esc(item.meals.join(' · '))}${state.checkedItems.includes(item.id) ? ' · Previously checked' : ''}${state.unavailable.includes(item.id) ? ' · Marked unavailable' : ''}</small></li>`).join('')}</ul>` : '<p>None.</p>';
-  const commitments = effect.retained.filter((item) => state.checkedItems.includes(item.id));
-  return `<h3>Shopping effects</h3><p>New or changed ingredients need confirmation. The earlier shopping record stays in history.</p><h4>Add to current list · unconfirmed</h4>${items(effect.added)}<h4>Remove from current list</h4>${items(effect.removed)}<h4>Retained checked commitments</h4>${items(commitments)}${state.shoppingConfirmed ? '<p>Confirmed shopping history remains recorded; the revised current list is separate.</p>' : ''}`;
+  const shopping = shoppingFor(state, preview.planId);
+  const items = (list) => list.length ? `<ul class="changes">${list.map((item) => `<li>${esc(item.name)}<small>${esc(item.meals.join(' · '))}${shopping.checkedItems.includes(item.id) ? ' · Previously checked' : ''}${shopping.unavailable.includes(item.id) ? ' · Marked unavailable' : ''}</small></li>`).join('')}</ul>` : '<p>None.</p>';
+  const commitments = effect.retained.filter((item) => shopping.checkedItems.includes(item.id));
+  return `<h3>Shopping effects</h3><p>New or changed ingredients need confirmation. The earlier shopping record stays in history.</p><h4>Add to current list · unconfirmed</h4>${items(effect.added)}<h4>Remove from current list</h4>${items(effect.removed)}<h4>Retained checked commitments</h4>${items(commitments)}${shopping.confirmed ? '<p>Confirmed shopping history remains recorded; the revised current list is separate.</p>' : ''}`;
 }
 function showDialog(preview) {
   state.preview = preview;
@@ -278,8 +283,9 @@ function showDialog(preview) {
     body = '<p>Save these seven dinners as the household’s plan. Monday covers Tuesday’s leftovers, hands-off dates have a valid dinner, and takeout is an explicit choice.</p><p>Later changes will preview all affected dinners before saving.</p>';
     confirmLabel = 'Confirm the week';
   } else if (preview.type === 'shopping') {
-    title = state.checkedItems.length < groceries().length || state.unavailable.length || incompleteMeals().length ? 'Confirm partial shopping' : 'Confirm shopping';
-    body = `<p>${state.checkedItems.length} of ${groceries().length} known items are checked. ${state.unavailable.length} marked unavailable.</p><p>Unchecked and incomplete ingredients remain visible. The app won't claim they're available or silently change a dinner.</p>`;
+    const shopping = shoppingFor(state, preview.planId);
+    title = shopping.checkedItems.length < groceryItems(state, preview.planId).length || shopping.unavailable.length || incompleteMeals().length ? 'Confirm partial shopping' : 'Confirm shopping';
+    body = `<p>${shopping.checkedItems.length} of ${groceryItems(state, preview.planId).length} known items are checked. ${shopping.unavailable.length} marked unavailable.</p><p>Unchecked and incomplete ingredients remain visible. The app won't claim they're available or silently change a dinner.</p>`;
     confirmLabel = 'Confirm shopping status';
   } else if (preview.type === 'correction') {
     title = 'Correct the completed dinner';
@@ -346,7 +352,7 @@ function confirmAction() {
   document.querySelector('#confirmation').close();
   if (!result.ok) { state.saveState = 'conflict'; state.message = result.reason; render(); announce(result.reason); return; }
   if (preview.type === 'week') currentPlan(state).confirmed = true;
-  if (preview.type === 'shopping') { const snapshot = structuredClone(groceries()).map((item) => ({ ...item, checked: state.checkedItems.includes(item.id), unavailable: state.unavailable.includes(item.id) })); state.shoppingHistory.push(snapshot); state.shoppingSnapshot ??= snapshot; state.shoppingConfirmed = true; }
+  if (preview.type === 'shopping') { const shopping = shoppingFor(state, preview.planId); const snapshot = groceryItems(state, preview.planId).map((item) => ({ ...item, checked: shopping.checkedItems.includes(item.id), unavailable: shopping.unavailable.includes(item.id) })); shopping.history.push(snapshot); shopping.snapshot ??= snapshot; shopping.confirmed = true; }
   state.preview = null; state.editSlotId = null; state.broken = false; state.saveState = 'saved';
   render(); announce(preview.type === 'week' ? 'The week is confirmed. Your shopping list is ready.' : 'Confirmed. The household history is retained.');
 }
@@ -395,13 +401,13 @@ if (typeof document !== 'undefined') {
       }
       if (key === 'edit-slot') { state.editSlotId = state.editSlotId === el.dataset.slot ? null : el.dataset.slot; render(); return; }
       if (key === 'cancel-edit') { state.editSlotId = null; render(); return; }
-      if (key === 'review-repair') { const { plan, slot } = contextFrom(el); showDialog(previewMealChange(state, plan.id, slot.id, document.querySelector('#meal-choice').value)); return; }
+      if (key === 'review-repair') { const { plan, slot } = contextFrom(el); const preview = previewMealChange(state, plan.id, slot.id, document.querySelector('#meal-choice').value); if (preview) showDialog(preview); else announce('This dinner is already selected.'); return; }
       if (key === 'history') { navigate('today'); state.historyTarget = { planId: el.dataset.plan, slotId: el.dataset.slot }; state.showFeedback = true; render(); return; }
       if (key === 'open-recipe') { location.hash = `recipe-${el.dataset.meal}`; return; }
       if (key === 'toggle-meal-form') { state.showMealForm = !state.showMealForm; render(); document.querySelector('#meal-name')?.focus(); return; }
       if (key === 'clear-search') { state.query = ''; state.category = 'All'; render(); return; }
       if (key === 'confirm-safety') { if (!document.querySelector('#compatibility-reviewed').checked) { announce('Explicit confirmation is needed before compatibility can change.'); return; } const meal = libraryMeals().find((m) => m.id === el.dataset.meal); meal.safe = true; if (!state.meals.includes(meal)) state.meals.push(meal); render(); announce('Household compatibility explicitly confirmed for this sample meal.'); return; }
-      if (key === 'unavailable') { const id = el.dataset.item; state.unavailable = state.unavailable.includes(id) ? state.unavailable.filter((x) => x !== id) : [...state.unavailable, id]; state.checkedItems = state.checkedItems.filter((x) => x !== id); render(); return; }
+      if (key === 'unavailable') { const shopping = shoppingFor(state); const id = el.dataset.item; shopping.unavailable = shopping.unavailable.includes(id) ? shopping.unavailable.filter((x) => x !== id) : [...shopping.unavailable, id]; shopping.checkedItems = shopping.checkedItems.filter((x) => x !== id); render(); return; }
       if (key === 'confirm-shopping') { showDialog({ type: 'shopping', planId: currentPlan(state).id, expectedRevision: state.revision }); return; }
       if (key === 'shopping-repair') { navigate('plan'); state.message = 'Shopping is retained. Choose the affected dinner to preview a repair; ingredients have not been assumed available.'; render(); return; }
       if (key === 'choose-today-plan') { state.todayChoice = { planId: el.dataset.plan, slotId: el.dataset.slot, date: state.sampleDate }; render(); return; }
@@ -421,7 +427,7 @@ if (typeof document !== 'undefined') {
     if (el.id === 'recipe-category') { state.category = el.value; render(); return; }
     if (el.id === 'recipe-version') { document.querySelector('#version-note').textContent = el.selectedIndex ? 'Sample sheet-pan version: 15 minutes hands-on. Slice the same ingredients, spread on a tray, and roast until the chicken is cooked through. This is a version of the same meal.' : 'Reserve plain chicken before combining if that helps the shared meal.'; return; }
     if (el.id === 'recipe-zip') { document.querySelector('#import-note').textContent = 'Sample import review: add as a new meal, link to an existing meal, or save recipe only. The selected file has not been read or uploaded.'; return; }
-    if (el.dataset.item) { state.checkedItems = el.checked ? [...new Set([...state.checkedItems, el.dataset.item])] : state.checkedItems.filter((id) => id !== el.dataset.item); if (el.checked) state.unavailable = state.unavailable.filter((id) => id !== el.dataset.item); render(); }
+    if (el.dataset.item) { const shopping = shoppingFor(state); shopping.checkedItems = el.checked ? [...new Set([...shopping.checkedItems, el.dataset.item])] : shopping.checkedItems.filter((id) => id !== el.dataset.item); if (el.checked) shopping.unavailable = shopping.unavailable.filter((id) => id !== el.dataset.item); render(); }
   });
   document.addEventListener('submit', (event) => {
     event.preventDefault(); const form = event.target; const values = new FormData(form);
