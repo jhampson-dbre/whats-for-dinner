@@ -1,0 +1,315 @@
+{
+  "title": "A working week, in your household’s own rhythm",
+  "question": "Choose a direction for the phone-first planning and shopping prototype. Each uses the same five task destinations and ordinary web controls.",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "The Family Album",
+      "thesis": "A readable dinner sequence links this week’s cooking, leftovers, and shopping without turning the plan into a scorecard.",
+      "palette": [
+        "#28354A",
+        "#EFF4F0",
+        "#176C61",
+        "#B7D8D0"
+      ],
+      "materials": [
+        "caption hierarchy",
+        "ordered dinner sequence"
+      ],
+      "viewport": "A slate-blue shell, a seven-day meal list with dates and capacity, and one clear Review shopping action; linked leftover dinners reveal their source inline.",
+      "risk": "Personal meal storytelling can crowd the task; captions and history must stay secondary to plan decisions.",
+      "comp": ".impeccable/mocks/decision/assigned.png",
+      "kicker": "THE ROLL",
+      "lineage": "Household album sequencing and caption rhythm",
+      "raised": [
+        {
+          "from": "challenger-manual",
+          "raise": "Every save and exception state gets the same precise, visible place in the work area."
+        },
+        {
+          "from": "challenger-saville",
+          "raise": "The weekly sequence has decisive hierarchy and one focal decision, rather than equal-weight tiles."
+        },
+        {
+          "from": "challenger-specimen",
+          "raise": "Type scale does the organizing: dates, meals, and supporting evidence have unmistakable ranks."
+        }
+      ],
+      "wireframe": {
+        "cols": 12,
+        "rows": 12,
+        "regions": [
+          {
+            "label": "Week + save state",
+            "x": 0,
+            "y": 0,
+            "w": 12,
+            "h": 2,
+            "accent": true
+          },
+          {
+            "label": "7 dated dinners",
+            "x": 0,
+            "y": 2,
+            "w": 12,
+            "h": 6
+          },
+          {
+            "label": "Leftover source → target",
+            "x": 0,
+            "y": 8,
+            "w": 12,
+            "h": 1,
+            "accent": true
+          },
+          {
+            "label": "Review shopping",
+            "x": 0,
+            "y": 9,
+            "w": 12,
+            "h": 1,
+            "accent": true
+          },
+          {
+            "label": "5 task destinations",
+            "x": 0,
+            "y": 11,
+            "w": 12,
+            "h": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "model-pick",
+      "label": "The Neighborhood Notice",
+      "thesis": "An orderly household week uses direct headings, clear date divisions, and visible shopping readiness.",
+      "palette": [
+        "#1C4595",
+        "#EAEDF8",
+        "#F1C75B",
+        "#182238"
+      ],
+      "materials": [
+        "community notice typography",
+        "date-led rhythm"
+      ],
+      "viewport": "Five task destinations frame a dense week list, with incomplete ingredients and changed capacity surfaced beside the dinner they affect.",
+      "risk": "The familiar noticeboard hierarchy can become ordinary; the distinctive move must stay in useful weekly readiness.",
+      "comp": ".impeccable/mocks/decision/model-pick.png",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "Community notices and dated household coordination",
+      "wireframe": {
+        "cols": 12,
+        "rows": 12,
+        "regions": [
+          {
+            "label": "Week + task shell",
+            "x": 0,
+            "y": 0,
+            "w": 12,
+            "h": 2,
+            "accent": true
+          },
+          {
+            "label": "Date-led dinner rows",
+            "x": 0,
+            "y": 2,
+            "w": 9,
+            "h": 7
+          },
+          {
+            "label": "Readiness",
+            "x": 9,
+            "y": 2,
+            "w": 3,
+            "h": 7,
+            "accent": true
+          },
+          {
+            "label": "Shopping next step",
+            "x": 0,
+            "y": 9,
+            "w": 12,
+            "h": 1
+          },
+          {
+            "label": "5 task destinations",
+            "x": 0,
+            "y": 11,
+            "w": 12,
+            "h": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "challenger-catalog",
+      "label": "The Meal Index",
+      "thesis": "Compact, consistently sized meal entries make a large recipe library and a busy week easy to scan.",
+      "palette": [
+        "#262823",
+        "#F0EEE5",
+        "#3F7461",
+        "#CFD7C7"
+      ],
+      "materials": [
+        "single-ink clarity",
+        "whole-cell density"
+      ],
+      "viewport": "The standard app shell contains seven compact dinner entries and a searchable meal index; selection remains a labeled button, with no tiny coded controls.",
+      "risk": "Density helps the recipe library more than a hurried phone user; dinner actions must not shrink to thumbnails.",
+      "comp": ".impeccable/mocks/decision/challenger-catalog.png",
+      "verdict": "competitive",
+      "lineage": "Convention catalogue density",
+      "case": "Product clarity improves for large libraries; household identification is weaker than the dinner sequence.",
+      "hero": "https://impeccable.style/worlds/cards/pop-culture-shelf-doujin-event-catalog-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/pop-culture-shelf-doujin-event-catalog.webp"
+    },
+    {
+      "id": "challenger-mixtape",
+      "label": "The Weekly Mix",
+      "thesis": "Dinner rows give a week a clear rhythm, with active effort aligned beside each meal and capacity explained in plain words.",
+      "palette": [
+        "#184C93",
+        "#F8FAFD",
+        "#A3ADBA",
+        "#D5AC3D"
+      ],
+      "materials": [
+        "ink-blue typography",
+        "compact caption rhythm"
+      ],
+      "viewport": "The normal Plan screen shows seven dated rows, known hands-on effort, explicit hands-off labels, and a shopping summary; no tape controls or physical flip navigation.",
+      "risk": "The metaphor must remain in rhythm alone; timed tape capacity cannot become invented cooking estimates.",
+      "comp": ".impeccable/mocks/decision/challenger-mixtape.png",
+      "verdict": "competitive",
+      "lineage": "Mixtape track-list rhythm",
+      "case": "Household familiarity holds; product clarity is less immediate unless effort and leftovers remain explicit.",
+      "hero": "https://impeccable.style/worlds/cards/vernacular-ephemera-cassette-j-card-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/vernacular-ephemera-cassette-j-card.webp"
+    },
+    {
+      "id": "challenger-wayfinding",
+      "label": "The Clear Next Step",
+      "thesis": "Strong labels and a persistent next action make the move from week planning to shopping hard to lose.",
+      "palette": [
+        "#F4CF32",
+        "#172522",
+        "#F3F5EC",
+        "#2E7063"
+      ],
+      "materials": [
+        "yellow wayfinding field",
+        "humanist task typography"
+      ],
+      "viewport": "A standard five-destination shell frames the week and its exceptions, with a persistent Review shopping button and a clearly labeled saved state.",
+      "risk": "High-salience yellow can dominate an app used for longer recipe reading; content areas need enough quiet.",
+      "comp": ".impeccable/mocks/decision/challenger-wayfinding.png",
+      "verdict": "competitive",
+      "lineage": "Airport wayfinding clarity",
+      "case": "Product clarity is stronger for interruptions; household identification is weaker than the dinner sequence.",
+      "hero": "https://impeccable.style/worlds/cards/wayfinding-cartography-signage-terminal-yellow-wayfinding-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/wayfinding-cartography-signage-terminal-yellow-wayfinding.webp"
+    },
+    {
+      "id": "challenger-manual",
+      "label": "The Reference Manual",
+      "thesis": "Structured information distinguishes week decisions from supporting recipe and household evidence.",
+      "palette": [
+        "#E4B72C",
+        "#234C81",
+        "#ECF2F2",
+        "#27342D"
+      ],
+      "materials": [
+        "section-color discipline",
+        "precise information hierarchy"
+      ],
+      "viewport": "The standard app shell separates weekly meals, shopping status, and save states; recipe detail remains a conventional reading view.",
+      "risk": "Manual-like density and multiple strong hues make an everyday dinner task feel heavier.",
+      "comp": ".impeccable/mocks/decision/challenger-manual.png",
+      "verdict": "declined",
+      "case": "It loses household identification and immediate task clarity after keeping standard web navigation.",
+      "kept": "A consistent visible location for save and exception states.",
+      "hero": "https://impeccable.style/worlds/cards/rw-manual-acetate-tab-board-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/rw-manual-acetate-tab-board.webp"
+    },
+    {
+      "id": "challenger-saville",
+      "label": "The Focused Week",
+      "thesis": "A dark restrained shell gives one week decision strong focus while names and states stay fully labeled.",
+      "palette": [
+        "#171D21",
+        "#FFFFFF",
+        "#9FCDB5",
+        "#D8C66F"
+      ],
+      "materials": [
+        "matte field",
+        "strict visual focus"
+      ],
+      "viewport": "A standard week list puts the selected dinner and shopping action in clear focus; no coded names, hidden legends, or hover-only meaning.",
+      "risk": "Dark sparse composition gives too little immediate week information on a phone.",
+      "comp": ".impeccable/mocks/decision/challenger-saville.png",
+      "verdict": "declined",
+      "case": "It loses household identification and week-scanning clarity, even with every label made explicit.",
+      "kept": "One decisive focal task and disciplined visual hierarchy.",
+      "hero": "https://impeccable.style/worlds/cards/brand-identity-canon-saville-catalog-sleeve-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/brand-identity-canon-saville-catalog-sleeve.webp"
+    },
+    {
+      "id": "challenger-specimen",
+      "label": "The Type-Led Week",
+      "thesis": "A strong type hierarchy lets the week, dinner names, and supporting evidence carry the screen.",
+      "palette": [
+        "#EEF1F4",
+        "#1C2B3A",
+        "#2E7568",
+        "#C1D7D1"
+      ],
+      "materials": [
+        "type-scale contrast",
+        "consistent baseline rhythm"
+      ],
+      "viewport": "Conventional task navigation surrounds a crisp seven-day list; meal names lead and ingredient/capacity notes follow at a readable scale.",
+      "risk": "The source’s giant display contrasts spend too much phone space on lettering rather than decisions.",
+      "comp": ".impeccable/mocks/decision/challenger-specimen.png",
+      "verdict": "declined",
+      "case": "It loses household identification and meal-task clarity once specimen controls are removed.",
+      "kept": "Unmistakable ranks for dates, meal names, and evidence.",
+      "hero": "https://impeccable.style/worlds/cards/variable-font-specimen-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/variable-font-specimen.webp"
+    }
+  ],
+  "reroll": {
+    "registers": [
+      "safer",
+      "bolder"
+    ]
+  },
+  "buildPath": {
+    "value": "code",
+    "toggle": true
+  },
+  "canon": true,
+  "canonCard": {
+    "id": "canon",
+    "label": "The category standard",
+    "thesis": "A familiar meal-planning app, executed with complete phone and desktop task flows.",
+    "palette": [
+      "#FFFFFF",
+      "#23322B",
+      "#266C54",
+      "#E9EFE9"
+    ],
+    "materials": [
+      "clean task grid",
+      "standard controls"
+    ],
+    "viewport": "A conventional five-tab app with dated dinner rows, grocery checkboxes, and searchable recipe details.",
+    "risk": "Familiar by design, with less distinctive character.",
+    "comp": ".impeccable/mocks/decision/canon.png"
+  },
+  "steer": true
+}
