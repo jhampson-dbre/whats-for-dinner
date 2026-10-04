@@ -1,6 +1,6 @@
 # Community noticeboard production UI prototype
 
-Status: code-first design checkpoint; rendered inspection, finish review, design-system documentation, and concrete prototype approval are pending.
+Status: code-first design prototype; rendered acceptance is verified. Final independent verdicts and concrete prototype approval are recorded in `production-ui-review.md`. Production UI implementation remains gated on user approval.
 
 The user selected the community noticeboard direction and a full phone-primary, desktop-capable prototype. Planning the week and shopping are the focal tasks. This artifact uses sample household data; it does not connect to Auth, APIs, production storage, or the browser-local MVP state.
 
@@ -44,12 +44,12 @@ The prototype simulates these states. The state scenarios and model checks demon
 
 Community noticeboard clarity uses Public Sans, a cobalt shell, pale periwinkle work surfaces, yellow selected/next actions, and ink text. Date divisions and readable meal names organize the week. State meaning always has text or an icon as well as color. The signature weekly readiness strip connects the source cooking dinner, its leftover target, and the shopping decision. Only a short state-settling moment is intended; reduced motion snaps.
 
-The development-only direction contract is in `.impeccable/surfaces/docs-prototypes-production-ui-index-html.md`. Final token-bearing `DESIGN.md` and `.impeccable/design.json` must be extracted from a rendered, reviewed artifact. They have not been written as if the proposed system were already verified or approved.
+The development-only direction contract is in `.impeccable/surfaces/docs-prototypes-production-ui-index-html.md`. Root `DESIGN.md` and `.impeccable/design.json` describe the prototype's actual visual system. Recording the system does not establish user approval or authorize production integration.
 
 ## Verification checkpoint and next gate
 
-`node scripts/check-production-ui.mjs` verifies source/leftover repair, stale-preview rejection without plan mutation, explicit-context correction, retained raw feedback/timing history, completed-dependent protection, and confirmed compatibility for replacements. `node --check docs/prototypes/production-ui/prototype.js` verifies syntax. These checks do not establish visual quality or complete UI interaction acceptance.
+`node scripts/check-production-ui.mjs` verifies confirmed date/slot selection, repair grocery changes, retained shopping commitments, unknown and corrected feedback, dynamic readiness, source/leftover repair, stale-preview rejection without plan mutation, explicit-context correction, retained timing history, completed-dependent protection, and confirmed compatibility for replacements. `node --check docs/prototypes/production-ui/prototype.js` verifies syntax.
 
-The Impeccable hook initially found tiny text; the affected styles were increased and the next hook scan reported no deterministic findings. No findings were suppressed. No rendered screenshot round or finish-review verdict exists yet: the browser permission check rejected opening the local prototype at `127.0.0.1:4173`.
+The initial tiny-text findings were corrected. The final scoped Impeccable detector returned no findings; none were suppressed. Browser access was restored and the Vite preview restarted. Phone (390 × 844), desktop (1440 × 1000), and the user's original viewport (1280 × 720) were inspected, with captures under `.impeccable/review/`.
 
-Next: allow local browser access, inspect phone and desktop together, run one executable Plan–Shop–Cook–feedback–recovery path and the defining difficult states, batch any material corrections, obtain the independent finish review, extract the design system, and present the concrete prototype for user approval. TREK-36 stays open. Production UI implementation is separate work after that approval.
+The executable sample Plan–Shop–Cook–feedback–repair path and representative difficult states were exercised. Review corrections made Today selection date-specific, exposed actual grocery changes, retained inspectable feedback history, derived readiness from current sample data, and restored phone recipe access. See `production-ui-review.md` for exact evidence and review scope. Next: approve the concrete prototype and this interaction brief. TREK-36 stays open until that approval; production implementation is separate work.

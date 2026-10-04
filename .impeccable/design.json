@@ -1,0 +1,414 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-04T02:47:35.211Z",
+  "title": "Design System: What's for Dinner? — Neighborhood Notice prototype",
+  "extensions": {
+    "colorMeta": {
+      "cobalt": {
+        "role": "primary",
+        "displayName": "Noticeboard Cobalt",
+        "tonalRamp": [
+          "oklch(15% 0.13970 261.93)",
+          "oklch(26.43% 0.13970 261.93)",
+          "oklch(37.86% 0.13970 261.93)",
+          "oklch(49.29% 0.13970 261.93)",
+          "oklch(60.71% 0.13970 261.93)",
+          "oklch(72.14% 0.13970 261.93)",
+          "oklch(83.57% 0.13970 261.93)",
+          "oklch(95% 0.13970 261.93)"
+        ]
+      },
+      "cobalt-deep": {
+        "role": "primary",
+        "displayName": "Deep Cobalt",
+        "tonalRamp": [
+          "oklch(15% 0.11298 260.68)",
+          "oklch(26.43% 0.11298 260.68)",
+          "oklch(37.86% 0.11298 260.68)",
+          "oklch(49.29% 0.11298 260.68)",
+          "oklch(60.71% 0.11298 260.68)",
+          "oklch(72.14% 0.11298 260.68)",
+          "oklch(83.57% 0.11298 260.68)",
+          "oklch(95% 0.11298 260.68)"
+        ]
+      },
+      "periwinkle": {
+        "role": "secondary",
+        "displayName": "Pale Periwinkle",
+        "tonalRamp": [
+          "oklch(15% 0.01512 273.85)",
+          "oklch(26.43% 0.01512 273.85)",
+          "oklch(37.86% 0.01512 273.85)",
+          "oklch(49.29% 0.01512 273.85)",
+          "oklch(60.71% 0.01512 273.85)",
+          "oklch(72.14% 0.01512 273.85)",
+          "oklch(83.57% 0.01512 273.85)",
+          "oklch(95% 0.01512 273.85)"
+        ]
+      },
+      "yellow": {
+        "role": "tertiary",
+        "displayName": "Selected Yellow",
+        "tonalRamp": [
+          "oklch(15% 0.13396 87.91)",
+          "oklch(26.43% 0.13396 87.91)",
+          "oklch(37.86% 0.13396 87.91)",
+          "oklch(49.29% 0.13396 87.91)",
+          "oklch(60.71% 0.13396 87.91)",
+          "oklch(72.14% 0.13396 87.91)",
+          "oklch(83.57% 0.13396 87.91)",
+          "oklch(95% 0.13396 87.91)"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "tonalRamp": [
+          "oklch(15% 0.00000 89.88)",
+          "oklch(26.43% 0.00000 89.88)",
+          "oklch(37.86% 0.00000 89.88)",
+          "oklch(49.29% 0.00000 89.88)",
+          "oklch(60.71% 0.00000 89.88)",
+          "oklch(72.14% 0.00000 89.88)",
+          "oklch(83.57% 0.00000 89.88)",
+          "oklch(95% 0.00000 89.88)"
+        ]
+      },
+      "ground": {
+        "role": "neutral",
+        "displayName": "Cool Ground",
+        "tonalRamp": [
+          "oklch(15% 0.00957 273.36)",
+          "oklch(26.43% 0.00957 273.36)",
+          "oklch(37.86% 0.00957 273.36)",
+          "oklch(49.29% 0.00957 273.36)",
+          "oklch(60.71% 0.00957 273.36)",
+          "oklch(72.14% 0.00957 273.36)",
+          "oklch(83.57% 0.00957 273.36)",
+          "oklch(95% 0.00957 273.36)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "tonalRamp": [
+          "oklch(15% 0.04423 264.84)",
+          "oklch(26.43% 0.04423 264.84)",
+          "oklch(37.86% 0.04423 264.84)",
+          "oklch(49.29% 0.04423 264.84)",
+          "oklch(60.71% 0.04423 264.84)",
+          "oklch(72.14% 0.04423 264.84)",
+          "oklch(83.57% 0.04423 264.84)",
+          "oklch(95% 0.04423 264.84)"
+        ]
+      },
+      "secondary": {
+        "role": "neutral",
+        "displayName": "Secondary Ink",
+        "tonalRamp": [
+          "oklch(15% 0.04720 265.91)",
+          "oklch(26.43% 0.04720 265.91)",
+          "oklch(37.86% 0.04720 265.91)",
+          "oklch(49.29% 0.04720 265.91)",
+          "oklch(60.71% 0.04720 265.91)",
+          "oklch(72.14% 0.04720 265.91)",
+          "oklch(83.57% 0.04720 265.91)",
+          "oklch(95% 0.04720 265.91)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Divider Line",
+        "tonalRamp": [
+          "oklch(15% 0.02768 267.51)",
+          "oklch(26.43% 0.02768 267.51)",
+          "oklch(37.86% 0.02768 267.51)",
+          "oklch(49.29% 0.02768 267.51)",
+          "oklch(60.71% 0.02768 267.51)",
+          "oklch(72.14% 0.02768 267.51)",
+          "oklch(83.57% 0.02768 267.51)",
+          "oklch(95% 0.02768 267.51)"
+        ]
+      },
+      "success": {
+        "role": "status",
+        "displayName": "Readiness Green",
+        "tonalRamp": [
+          "oklch(15% 0.07274 164.63)",
+          "oklch(26.43% 0.07274 164.63)",
+          "oklch(37.86% 0.07274 164.63)",
+          "oklch(49.29% 0.07274 164.63)",
+          "oklch(60.71% 0.07274 164.63)",
+          "oklch(72.14% 0.07274 164.63)",
+          "oklch(83.57% 0.07274 164.63)",
+          "oklch(95% 0.07274 164.63)"
+        ]
+      },
+      "success-ground": {
+        "role": "status",
+        "displayName": "Readiness Ground",
+        "tonalRamp": [
+          "oklch(15% 0.01656 156.91)",
+          "oklch(26.43% 0.01656 156.91)",
+          "oklch(37.86% 0.01656 156.91)",
+          "oklch(49.29% 0.01656 156.91)",
+          "oklch(60.71% 0.01656 156.91)",
+          "oklch(72.14% 0.01656 156.91)",
+          "oklch(83.57% 0.01656 156.91)",
+          "oklch(95% 0.01656 156.91)"
+        ]
+      },
+      "warning": {
+        "role": "status",
+        "displayName": "Caution Ochre",
+        "tonalRamp": [
+          "oklch(15% 0.08888 80.16)",
+          "oklch(26.43% 0.08888 80.16)",
+          "oklch(37.86% 0.08888 80.16)",
+          "oklch(49.29% 0.08888 80.16)",
+          "oklch(60.71% 0.08888 80.16)",
+          "oklch(72.14% 0.08888 80.16)",
+          "oklch(83.57% 0.08888 80.16)",
+          "oklch(95% 0.08888 80.16)"
+        ]
+      },
+      "warning-ground": {
+        "role": "status",
+        "displayName": "Caution Ground",
+        "tonalRamp": [
+          "oklch(15% 0.05366 92.15)",
+          "oklch(26.43% 0.05366 92.15)",
+          "oklch(37.86% 0.05366 92.15)",
+          "oklch(49.29% 0.05366 92.15)",
+          "oklch(60.71% 0.05366 92.15)",
+          "oklch(72.14% 0.05366 92.15)",
+          "oklch(83.57% 0.05366 92.15)",
+          "oklch(95% 0.05366 92.15)"
+        ]
+      },
+      "error": {
+        "role": "status",
+        "displayName": "Failure Red",
+        "tonalRamp": [
+          "oklch(15% 0.12357 25.39)",
+          "oklch(26.43% 0.12357 25.39)",
+          "oklch(37.86% 0.12357 25.39)",
+          "oklch(49.29% 0.12357 25.39)",
+          "oklch(60.71% 0.12357 25.39)",
+          "oklch(72.14% 0.12357 25.39)",
+          "oklch(83.57% 0.12357 25.39)",
+          "oklch(95% 0.12357 25.39)"
+        ]
+      },
+      "error-ground": {
+        "role": "status",
+        "displayName": "Failure Ground",
+        "tonalRamp": [
+          "oklch(15% 0.02012 28.91)",
+          "oklch(26.43% 0.02012 28.91)",
+          "oklch(37.86% 0.02012 28.91)",
+          "oklch(49.29% 0.02012 28.91)",
+          "oklch(60.71% 0.02012 28.91)",
+          "oklch(72.14% 0.02012 28.91)",
+          "oklch(83.57% 0.02012 28.91)",
+          "oklch(95% 0.02012 28.91)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Page headings."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Section and group headings."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Entry and subsection headings."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Inherited text with comfortable paragraph leading."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Visible field labels and supporting UI labels."
+      },
+      "action": {
+        "displayName": "Action",
+        "purpose": "Button labels."
+      }
+    },
+    "shadows": [
+      {
+        "name": "dialog",
+        "value": "0 16px 48px #18223840",
+        "purpose": "The confirmation dialog only; resting content groups remain flat."
+      }
+    ],
+    "motion": [
+      {
+        "name": "duration-state",
+        "value": "140ms",
+        "purpose": "Saved-state background settle."
+      },
+      {
+        "name": "ease-state",
+        "value": "cubic-bezier(.16, 1, .3, 1)",
+        "purpose": "Easing for the saved-state settle."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "medium",
+        "value": "1180px"
+      },
+      {
+        "name": "phone",
+        "value": "760px"
+      }
+    ],
+    "dialogBackdrop": {
+      "value": "#18223888",
+      "purpose": "Dims the page behind the native confirmation dialog."
+    },
+    "tonalRampProvenance": "Preview ramps are synthesized in OKLCH from each actual source color at constant hue and chroma; the frontmatter retains the implemented hex values. The prototype does not define or use these generated ramps.",
+    "sourceEvidence": [
+      "docs/prototypes/production-ui/styles.css",
+      "docs/prototypes/production-ui/index.html",
+      "docs/prototypes/production-ui/prototype.js"
+    ],
+    "approvalBoundary": "This records the design prototype. Prototype approval is pending; it does not authorize production UI implementation."
+  },
+  "components": [
+    {
+      "name": "Primary button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The cobalt native button for confirmation and primary task actions.",
+      "html": "<button type=\"button\" class=\"ds-primary\">Confirm this week</button>",
+      "css": ".ds-primary { font-family: var(--font-ui, 'Public Sans', sans-serif); font-size: 1rem; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px; font-weight: 650; line-height: 1.25; text-decoration: none; border: 1px solid transparent; border-radius: var(--radius-control, 6px); cursor: pointer; color: var(--color-paper, #ffffff); background: var(--color-cobalt, #1c4595); } .ds-primary:hover { background: var(--color-cobalt-deep, #123572); } .ds-primary:focus-visible { outline: 3px solid var(--color-yellow, #f1c75b); outline-offset: 4px; } .ds-primary:disabled { cursor: not-allowed; opacity: .55; }"
+    },
+    {
+      "name": "Yellow button",
+      "kind": "button",
+      "refersTo": "button-yellow",
+      "description": "The warm action used to review shopping after the week is confirmed.",
+      "html": "<button type=\"button\" class=\"ds-yellow\">Review shopping</button>",
+      "css": ".ds-yellow { font-family: var(--font-ui, 'Public Sans', sans-serif); font-size: 1rem; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px; font-weight: 650; line-height: 1.25; text-decoration: none; border: 1px solid transparent; border-radius: var(--radius-control, 6px); cursor: pointer; color: var(--color-ink, #182238); background: var(--color-yellow, #f1c75b); } .ds-yellow:hover { background: #e6b842; } .ds-yellow:focus-visible { outline: 3px solid var(--color-cobalt, #1c4595); outline-offset: 4px; } .ds-yellow:disabled { cursor: not-allowed; opacity: .55; }"
+    },
+    {
+      "name": "Secondary button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A paper button for a supporting task or keeping the current plan.",
+      "html": "<button type=\"button\" class=\"ds-secondary\">Keep the current plan</button>",
+      "css": ".ds-secondary { font-family: var(--font-ui, 'Public Sans', sans-serif); font-size: 1rem; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px; font-weight: 650; line-height: 1.25; text-decoration: none; border: 1px solid transparent; border-radius: var(--radius-control, 6px); cursor: pointer; color: var(--color-ink, #182238); background: var(--color-paper, #ffffff); border-color: var(--color-line, #cbd3e6); } .ds-secondary:hover { background: var(--color-periwinkle, #eaedf8); border-color: var(--color-cobalt, #1c4595); } .ds-secondary:focus-visible { outline: 3px solid var(--color-cobalt, #1c4595); outline-offset: 4px; } .ds-secondary:disabled { cursor: not-allowed; opacity: .55; }"
+    },
+    {
+      "name": "Text action",
+      "kind": "button",
+      "refersTo": "button-text",
+      "description": "A labeled native action that needs less visual weight than a filled button.",
+      "html": "<button type=\"button\" class=\"ds-text-action\">Record dinner without timing</button>",
+      "css": ".ds-text-action { font-family: var(--font-ui, 'Public Sans', sans-serif); font-size: 1rem; min-height: 44px; padding: 8px 0; border: 0; background: transparent; color: var(--color-cobalt, #1c4595); font-weight: 650; line-height: 1.5; text-align: left; cursor: pointer; } .ds-text-action:hover { text-decoration: underline; text-underline-offset: .2em; } .ds-text-action:focus-visible { outline: 3px solid var(--color-cobalt, #1c4595); outline-offset: 4px; } .ds-text-action:disabled { cursor: not-allowed; opacity: .55; }"
+    },
+    {
+      "name": "Icon button",
+      "kind": "button",
+      "refersTo": "button-icon",
+      "description": "The explicitly named close control in a review dialog.",
+      "html": "<button type=\"button\" class=\"ds-icon-button\" aria-label=\"Close review\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m6 6 12 12M6 18 18 6\"/></svg></button>",
+      "css": ".ds-icon-button { font-family: var(--font-ui, 'Public Sans', sans-serif); min-height: 44px; width: 44px; padding: 10px; color: var(--color-ink, #182238); background: var(--color-paper, #ffffff); border: 1px solid var(--color-line, #cbd3e6); border-radius: var(--radius-control, 6px); cursor: pointer; } .ds-icon-button svg { width: 22px; height: 22px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; } .ds-icon-button:focus-visible { outline: 3px solid var(--color-cobalt, #1c4595); outline-offset: 4px; } .ds-icon-button:disabled { cursor: not-allowed; opacity: .55; }"
+    },
+    {
+      "name": "Labeled field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "Native text and select controls keep a visible label, quiet outline, and cobalt focus.",
+      "html": "<div class=\"ds-field-group\"><label class=\"ds-field-label\" for=\"ds-meal-name\">Meal name</label><input class=\"ds-field\" id=\"ds-meal-name\" name=\"name\" required placeholder=\"A dinner your household knows\" /><label class=\"ds-field-label\" for=\"ds-capacity\">Household capacity</label><select class=\"ds-field\" id=\"ds-capacity\"><option>Normal night</option><option>Quick-cook night</option><option>Hands-off night</option></select></div>",
+      "css": ".ds-field-group { font-family: var(--font-ui, 'Public Sans', sans-serif); color: var(--color-ink, #182238); } .ds-field-label { display: block; margin: 0 0 6px; font-size: .875rem; font-weight: 600; line-height: 1.5; } .ds-field-label:not(:first-child) { margin-top: 16px; } .ds-field { font-family: var(--font-ui, 'Public Sans', sans-serif); font-size: 1rem; line-height: 1.5; min-height: 44px; width: 100%; padding: 10px 12px; background: var(--color-paper, #ffffff); color: var(--color-ink, #182238); border: 1px solid #a5b2cd; border-radius: var(--radius-control, 6px); caret-color: var(--color-cobalt, #1c4595); } .ds-field::placeholder { color: #586581; opacity: 1; } .ds-field:focus-visible { outline: 3px solid var(--color-cobalt, #1c4595); outline-offset: 4px; }"
+    },
+    {
+      "name": "Task navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "Visible SVG and text links, with yellow identifying the current task.",
+      "html": "<nav class=\"ds-navigation\" aria-label=\"Main navigation\"><a class=\"ds-nav-link\" href=\"#today\" ><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4L19 5\"/></svg><span>Today</span></a><a class=\"ds-nav-link\" href=\"#plan\" aria-current=\"page\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"3\" y=\"5\" width=\"18\" height=\"16\" rx=\"2\"/><path d=\"M7 3v4m10-4v4M3 10h18M7 14h3m4 0h3M7 17h3\"/></svg><span>Plan</span></a><a class=\"ds-nav-link\" href=\"#shop\" ><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m4 8 2 12h12l2-12H4Zm4 0 4-6 4 6M9 12v4m6-4v4\"/></svg><span>Shop</span></a><a class=\"ds-nav-link\" href=\"#recipes\" ><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 5c-3-2-6-2-9-1v15c3-1 6-1 9 1m0-15c3-2 6-2 9-1v15c-3-1-6-1-9 1V5Z\"/></svg><span>Recipes</span></a><a class=\"ds-nav-link\" href=\"#household\" ><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"9\" cy=\"7\" r=\"3\"/><path d=\"M3 21v-3a6 6 0 0 1 12 0v3M16 4a3 3 0 0 1 0 6m2 4a5 5 0 0 1 3 4v3\"/></svg><span>Household</span></a></nav>",
+      "css": ".ds-navigation { font-family: var(--font-ui, 'Public Sans', sans-serif); display: grid; gap: 8px; padding: 8px; background: var(--color-cobalt, #1c4595); } .ds-nav-link { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 12px 14px; border-radius: var(--radius-control, 6px); color: #eef2ff; font-size: 1rem; font-weight: 600; line-height: 1.5; text-decoration: none; } .ds-nav-link:hover { background: var(--color-cobalt-deep, #123572); } .ds-nav-link[aria-current] { color: var(--color-ink, #182238); background: var(--color-yellow, #f1c75b); } .ds-nav-link svg { width: 22px; height: 22px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; } .ds-nav-link:focus-visible { outline: 3px solid var(--color-yellow, #f1c75b); outline-offset: 4px; }"
+    },
+    {
+      "name": "Compatibility badges",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Noninteractive labels communicate neutral, confirmed, and review states with words.",
+      "html": "<span class=\"ds-badge\">Draft week</span> <span class=\"ds-badge ds-badge-success\">Confirmed compatible</span> <span class=\"ds-badge ds-badge-warning\">Needs review</span>",
+      "css": ".ds-badge { font-family: var(--font-ui, 'Public Sans', sans-serif); display: inline-block; padding: 3px 8px; border-radius: 4px; background: var(--color-periwinkle, #eaedf8); color: var(--color-ink, #182238); font-size: .75rem; font-weight: 600; line-height: 1.5; } .ds-badge-success { color: var(--color-success, #245f48); background: var(--color-success-ground, #e5f1e9); } .ds-badge-warning { color: var(--color-warning, #70500c); background: var(--color-warning-ground, #fff2ca); }"
+    },
+    {
+      "name": "Dated dinner board",
+      "kind": "card",
+      "refersTo": "surface",
+      "description": "A paper group with a periwinkle header and divided dated records.",
+      "html": "<section class=\"ds-board\" aria-labelledby=\"ds-week-heading\"><header class=\"ds-board-heading\"><h2 id=\"ds-week-heading\">Seven dinners, one household</h2><p>5 cooking nights · 1 leftover night</p></header><ol class=\"ds-week-list\"><li class=\"ds-dinner-row\"><div class=\"ds-day\">Mon<strong>5</strong></div><div><div class=\"ds-meal-title\">Chicken fajitas</div><div class=\"ds-row-notes\">25 min hands-on</div><span class=\"ds-capacity\">Quick-cook night</span></div><button type=\"button\" class=\"ds-row-action\">Change</button></li><li class=\"ds-dinner-row\"><div class=\"ds-day\">Tue<strong>6</strong></div><div><div class=\"ds-meal-title\">Fajita leftovers</div><div class=\"ds-row-notes\">Serve or reheat</div><span class=\"ds-source\">Monday cooking covers this dinner</span></div><button type=\"button\" class=\"ds-row-action\">Change</button></li></ol></section>",
+      "css": ".ds-board { font-family: var(--font-ui, 'Public Sans', sans-serif); min-width: 0; color: var(--color-ink, #182238); background: var(--color-paper, #ffffff); border-radius: var(--radius-surface, 12px); overflow: hidden; } .ds-board-heading { padding: 22px 24px; background: var(--color-periwinkle, #eaedf8); } .ds-board-heading h2 { margin: 0; font-size: 1.25rem; font-weight: 720; line-height: 1.18; letter-spacing: -.018em; } .ds-board-heading p { margin: 0; font-size: .875rem; line-height: 1.5; color: var(--color-secondary, #47536e); } .ds-week-list { margin: 0; padding: 0; list-style: none; } .ds-dinner-row { display: grid; grid-template-columns: 50px minmax(0, 1fr) auto; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--color-line, #cbd3e6); } .ds-dinner-row:last-child { border-bottom: 0; } .ds-day { font-size: .78rem; line-height: 1.3; text-transform: uppercase; font-weight: 650; letter-spacing: .02em; color: var(--color-secondary, #47536e); font-variant-numeric: tabular-nums; } .ds-day strong { display: block; margin-top: 5px; font-size: 1.4rem; font-weight: 650; color: var(--color-ink, #182238); } .ds-meal-title { font-size: 1rem; font-weight: 700; line-height: 1.35; } .ds-row-notes { margin-top: 6px; font-size: .8rem; line-height: 1.5; color: var(--color-secondary, #47536e); } .ds-capacity { display: inline-flex; margin-top: 9px; padding: 3px 8px; border-radius: 4px; background: var(--color-periwinkle, #eaedf8); font-size: .75rem; font-weight: 650; line-height: 1.5; } .ds-source { display: block; margin-top: 6px; font-size: .8rem; line-height: 1.5; color: var(--color-success, #245f48); } .ds-row-action { font-family: var(--font-ui, 'Public Sans', sans-serif); min-height: 40px; padding: 0 2px; border: 0; background: transparent; color: var(--color-cobalt, #1c4595); font-size: .85rem; font-weight: 650; line-height: 1.5; text-align: left; cursor: pointer; } .ds-row-action:hover { text-decoration: underline; text-underline-offset: .2em; } .ds-row-action:focus-visible { outline: 3px solid var(--color-cobalt, #1c4595); outline-offset: 4px; } .ds-row-action:disabled { cursor: not-allowed; opacity: .55; } @media (max-width: 760px) { .ds-board-heading { padding: 18px 16px; } .ds-board-heading h2 { font-size: 1rem; } .ds-board-heading p { font-size: .78rem; } .ds-dinner-row { grid-template-columns: 36px minmax(0, 1fr) auto; gap: 10px; padding: 18px 16px; } .ds-day { font-size: .75rem; } .ds-day strong { font-size: 1.2rem; } .ds-meal-title { font-size: .94rem; } .ds-row-action { font-size: .75rem; } .ds-row-notes, .ds-source { font-size: .875rem; } }"
+    },
+    {
+      "name": "Grocery checkbox row",
+      "kind": "custom",
+      "refersTo": "field",
+      "description": "A native checkbox accompanies ingredient provenance; checked items retain a readable completed state.",
+      "html": "<div class=\"ds-grocery-row ds-checked\"><label class=\"ds-check-label\"><input class=\"ds-checkbox\" type=\"checkbox\" checked /><span><span class=\"ds-item-name\">3 peppers</span><small>For Chicken fajitas</small></span></label><button type=\"button\" class=\"ds-unavailable\">Not available?</button></div>",
+      "css": ".ds-grocery-row { font-family: var(--font-ui, 'Public Sans', sans-serif); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; padding: 13px 0; gap: 12px; border-bottom: 1px solid var(--color-line, #cbd3e6); color: var(--color-ink, #182238); font-size: 1rem; line-height: 1.5; } .ds-check-label { display: flex; align-items: start; gap: 10px; min-height: 44px; margin: 0; font-weight: 500; } .ds-check-label span { display: block; } .ds-checkbox { accent-color: var(--color-cobalt, #1c4595); width: 18px; height: 18px; margin: 4px 0 0; flex: 0 0 auto; } .ds-grocery-row small { display: block; color: var(--color-secondary, #47536e); font-weight: 400; } .ds-checked .ds-item-name { text-decoration: line-through; color: var(--color-secondary, #47536e); } .ds-unavailable { font-family: var(--font-ui, 'Public Sans', sans-serif); font-size: .78rem; min-height: 40px; padding: 8px 0; border: 0; background: transparent; color: var(--color-cobalt, #1c4595); font-weight: 650; line-height: 1.5; text-align: left; cursor: pointer; } .ds-unavailable:hover { text-decoration: underline; text-underline-offset: .2em; } .ds-unavailable:focus-visible { outline: 3px solid var(--color-cobalt, #1c4595); outline-offset: 4px; } .ds-checkbox:focus-visible { outline: 3px solid var(--color-cobalt, #1c4595); outline-offset: 4px; } .ds-unavailable:disabled { cursor: not-allowed; opacity: .55; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Neighborhood Notice",
+    "overview": "Neighborhood Notice makes a household week feel like a clear, shared noticeboard. Cobalt frames the work, pale periwinkle gathers related information, and ink carries the content. Paper surfaces and fine dividers give dated rows room to breathe without lifting each dinner into a separate card.\n\nThe interface is practical and visibly labeled. One self-hosted typeface supplies compact metadata, confident headings, and plain action text. Selection, readiness, warnings, and failures use color together with words; controls retain their native semantics and visible keyboard focus.\n\nThis record describes the clickable design prototype in `docs/prototypes/production-ui/`, including its phone and desktop presentation. The user selected Community noticeboard / Neighborhood Notice (direction seed `e7bf206d`). Prototype approval remains pending, and this file does not authorize production UI implementation. The task map and first-surface composition remain in the surface brief.",
+    "keyCharacteristics": [
+      "Cobalt navigation and yellow selected destinations.",
+      "Flat paper groups with periwinkle headings and dated rows.",
+      "Public Sans throughout, with visible labels and restrained metadata.",
+      "Explicit state text, native controls, and a brief state-color settle."
+    ],
+    "rules": [
+      {
+        "name": "The Selected Destination Rule",
+        "body": "The current task destination uses yellow with ink text and an explicit current-page attribute. Cobalt identifies primary actions and navigation context.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Typeface Rule",
+        "body": "Public Sans carries headings, body copy, controls, and labels. Hierarchy comes from size, weight, spacing, and placement.",
+        "section": "typography"
+      },
+      {
+        "name": "The Grouped Rows Rule",
+        "body": "Related dinners, groceries, recipes, and household records share a group; dividers organize entries inside it.",
+        "section": "layout"
+      },
+      {
+        "name": "The Resting Surface Rule",
+        "body": "Work areas remain flat at rest. The confirmation dialog alone uses an elevation shadow and a dimmed backdrop.",
+        "section": "elevation"
+      },
+      {
+        "name": "The State With Words Rule",
+        "body": "A state color always accompanies a readable status, label, or action. Saved and pending updates use status regions; failed saves use an alert.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do keep Public Sans self-hosted and use the recorded hierarchy.",
+      "Do organize recurring records as labeled groups and readable rows.",
+      "Do preserve native button, link, field, checkbox, radio, disclosure, and dialog semantics.",
+      "Do retain visible focus and readable labels in phone and desktop presentations."
+    ],
+    "donts": [
+      "Don't rely on color alone to communicate save, warning, compatibility, or error states.",
+      "Don't replace the prototype's visible task labels with standalone icons."
+    ]
+  }
+}
