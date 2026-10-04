@@ -40,12 +40,23 @@ export function createDemoState() {
     plans: [{ id: 'plan-week', name: '5–11 October', confirmed: false, slots: ids.map((mealId, i) => ({ id: `slot-${i}`, day: names[i], date: `2026-10-${String(5 + i).padStart(2, '0')}`, mealId, capacity: i === 1 || i === 3 ? 'hands-off' : i === 0 ? 'quick' : 'normal', sourceId: i === 1 ? 'slot-0' : null, completed: false, elapsed: null, feedback: null })) }],
     selectedPlanId: 'plan-week', revision: 8, repairs: [], corrections: [], view: 'plan', recipeId: null, query: '', category: 'All',
     saveState: 'saved', access: true, shoppingConfirmed: false, checkedItems: [], unavailable: [], editSlotId: null,
-    preview: null, broken: false, todayChoice: null, empty: false, showMealForm: false, showFeedback: false,
-    inviteStep: 0, invitation: false, loading: false, largeLibrary: false, visibleMeals: 12, message: '', todaySlotId: 'slot-0', shoppingSnapshot: null,
+    preview: null, broken: false, todayChoice: null, sampleDate: '2026-10-05', historyTarget: null, empty: false, showMealForm: false, showFeedback: false,
+    inviteStep: 0, invitation: false, loading: false, largeLibrary: false, visibleMeals: 12, message: '', shoppingSnapshot: null, shoppingHistory: [],
   };
 }
 const currentPlan = (s) => s.plans.find((item) => item.id === s.selectedPlanId);
 const mealFor = (s, id) => s.meals.find((item) => item.id === id);
+export function todaySelection(s) {
+  if (s.historyTarget) {
+    const plan = s.plans.find((p) => p.id === s.historyTarget.planId);
+    const slot = plan?.slots.find((item) => item.id === s.historyTarget.slotId);
+    return slot ? { plan, slot, history: true } : null;
+  }
+  const matches = s.plans.filter((p) => p.confirmed).flatMap((plan) => plan.slots.filter((slot) => slot.date === s.sampleDate).map((slot) => ({ plan, slot })));
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) return matches.find(({ plan, slot }) => plan.id === s.todayChoice?.planId && slot.id === s.todayChoice?.slotId && slot.date === s.todayChoice?.date) ?? null;
+  return null;
+}
 export function eligible(s, meal, slot) {
   if (!meal || (s.restrictions.length && !meal.safe)) return false;
   if (slot.capacity === 'hands-off' && !meal.handsOff) return false;
@@ -82,11 +93,17 @@ export function confirmPreview(s, preview) {
   const plan = s.plans.find((item) => item.id === preview.planId);
   if (!plan) return { ok: false, reason: 'Choose the plan again before confirming.' };
   if (preview.type === 'repair' || preview.type === 'correction') {
+    const effect = groceryEffect(s, preview);
+    const shoppingChanged = effect.added.length || effect.removed.length;
     for (const change of preview.changes) {
       const slot = plan.slots.find((item) => item.id === change.slotId);
       if (!slot || (slot.completed && !(preview.type === 'correction' && slot.id === preview.slotId))) return { ok: false, reason: 'The affected dinner is no longer available for repair.' };
     }
     for (const change of preview.changes) Object.assign(plan.slots.find((item) => item.id === change.slotId), { mealId: change.after, sourceId: change.sourceId });
+    const currentIds = new Set(groceryItems(s, preview.planId).map((item) => item.id));
+    s.checkedItems = s.checkedItems.filter((id) => currentIds.has(id));
+    s.unavailable = s.unavailable.filter((id) => currentIds.has(id));
+    if (shoppingChanged) s.shoppingConfirmed = false;
     s.repairs.push(structuredClone(preview));
     if (preview.type === 'correction') {
       const slot = plan.slots.find((item) => item.id === preview.slotId);
@@ -98,11 +115,55 @@ export function confirmPreview(s, preview) {
   return { ok: true };
 }
 
+export function groceryItems(s, planId = s.selectedPlanId, changes = []) {
+  const plan = s.plans.find((item) => item.id === planId);
+  return (plan?.slots ?? []).flatMap((slot) => {
+    const change = changes.find((item) => item.slotId === slot.id);
+    const sourceId = change ? change.sourceId : slot.sourceId;
+    const mealId = change ? change.after : slot.mealId;
+    const meal = mealFor(s, mealId);
+    return sourceId || mealId === 'takeout' ? [] : (meal?.ingredients ?? []).map((name, index) => ({ id: `${planId}-${slot.id}-${mealId}-${index}`, name, meals: [`${meal.name} · ${slot.day}`] }));
+  });
+}
+export function groceryEffect(s, preview) {
+  const before = groceryItems(s, preview.planId);
+  const after = groceryItems(s, preview.planId, preview.changes);
+  const oldIds = new Set(before.map((item) => item.id));
+  const newIds = new Set(after.map((item) => item.id));
+  return { added: after.filter((item) => !oldIds.has(item.id)), removed: before.filter((item) => !newIds.has(item.id)), retained: after.filter((item) => oldIds.has(item.id)) };
+}
+export function recordFeedback(s, planId, slotId, responses, effort, leftoversProduced) {
+  const slot = s.plans.find((plan) => plan.id === planId)?.slots.find((item) => item.id === slotId);
+  if (!slot) throw Error('Choose the dinner and plan again.');
+  if (slot.feedback) (slot.feedbackHistory ??= []).push({ responses: structuredClone(slot.feedback), effort: slot.activeEffortMinutes ?? null, leftoversProduced: slot.leftoversProduced ?? null });
+  slot.feedback = responses;
+  slot.activeEffortMinutes = effort;
+  slot.leftoversProduced = leftoversProduced;
+  s.revision++;
+  const dependent = s.plans.find((plan) => plan.id === planId).slots.find((item) => item.sourceId === slotId && !item.completed);
+  s.broken = leftoversProduced === false && !!dependent;
+  return dependent;
+}
+export function readiness(s, planId = s.selectedPlanId) {
+  const plan = s.plans.find((item) => item.id === planId);
+  const compatible = plan.slots.every((slot) => slot.mealId === 'takeout' || (!!mealFor(s, slot.mealId) && (!s.restrictions.length || mealFor(s, slot.mealId).safe)));
+  const capacity = plan.slots.every((slot) => {
+    if (slot.mealId === 'takeout' || slot.sourceId || slot.capacity === 'normal') return true;
+    const meal = mealFor(s, slot.mealId);
+    return slot.capacity === 'hands-off' ? !!meal?.handsOff : meal?.effort !== undefined && meal.effort <= 30;
+  });
+  const leftovers = plan.slots.filter((slot) => slot.sourceId).every((slot) => {
+    const source = plan.slots.find((item) => item.id === slot.sourceId);
+    return source && source.leftoversProduced !== false && mealFor(s, source.mealId)?.leftovers;
+  });
+  return { compatible, capacity, leftovers, leftoverCount: plan.slots.filter((slot) => slot.sourceId).length };
+}
+
 let state = createDemoState();
 let toastTimer;
 const titleFor = (id) => id === 'takeout' ? 'Takeout' : mealFor(state, id)?.name ?? 'Choose a dinner';
 const action = (label, key, variant, attrs) => btn(esc(label), key, variant, attrs);
-const slotAttrs = (slot) => `data-slot="${slot.id}" data-plan="${currentPlan(state).id}"`;
+const slotAttrs = (slot) => `data-slot="${slot.id}" data-plan="${currentPlan(state).id}" data-revision="${state.revision}"`;
 const badge = (label, kind = '') => `<span class="badge ${kind}">${esc(label)}</span>`;
 
 function saveBar() {
@@ -118,15 +179,7 @@ function planChoice() {
   return state.plans.length > 1 ? `<div class="content-section"><label for="plan-choice">Which plan?</label><select id="plan-choice">${state.plans.map((p) => `<option value="${p.id}" ${p.id === state.selectedPlanId ? 'selected' : ''}>${p.name}</option>`).join('')}</select></div>` : '';
 }
 function groceries() {
-  if (state.shoppingSnapshot) return state.shoppingSnapshot;
-  const list = [];
-  currentPlan(state)?.slots.filter((slot) => !slot.sourceId && slot.mealId !== 'takeout').forEach((slot) => {
-    const meal = mealFor(state, slot.mealId);
-    meal?.ingredients.forEach((line, index) => {
-      list.push({ id: `${currentPlan(state).id}-${slot.id}-${meal.id}-${index}`, name: line, meals: [`${meal.name} · ${slot.day}`] });
-    });
-  });
-  return list;
+  return groceryItems(state);
 }
 function incompleteMeals() { return currentPlan(state)?.slots.filter((slot) => !slot.sourceId && slot.mealId !== 'takeout' && !mealFor(state, slot.mealId)?.ingredients.length) ?? []; }
 function capacityText(slot) { return slot.capacity === 'hands-off' ? 'Hands-off night' : slot.capacity === 'quick' ? 'Quick-cook night' : ''; }
@@ -138,13 +191,14 @@ function planView() {
   if (state.empty) return heading('Make room for the week', 'Start with the dinners your household already knows.') + `<section class="empty-state"><h2>A small meal library is enough to begin</h2><p>Add your diners and hard restrictions, then choose 8–12 household meals. Recipe Keeper recipes can help with ingredients; name-only meals can join the plan too.</p><div class="actions">${action('Set up the household', 'go-household')}${action('Add meals', 'go-recipes', 'secondary')}</div></section>`;
   const plan = currentPlan(state);
   const cooking = plan.slots.filter((slot) => slot.mealId !== 'takeout' && !slot.sourceId).length;
+  const ready = readiness(state);
   return heading('Your week', '5–11 October · A starting point, with room to change.', weekAction()) + planChoice() + saveBar() +
     (state.message ? `<section class="alert"><p>${esc(state.message)}</p></section>` : '') +
     `<div class="week-layout"><section class="week-board" aria-labelledby="week-heading"><header class="board-heading"><div><h2 id="week-heading">Seven dinners, one household</h2><p>${cooking} cooking nights · ${plan.slots.filter((s) => s.sourceId).length} leftover night · Takeout is your choice</p></div>${badge(plan.confirmed ? 'Confirmed week' : 'Draft week', plan.confirmed ? 'success' : '')}</header><ol class="week-list">${plan.slots.map((slot, i) => {
       const meal = mealFor(state, slot.mealId);
       const edit = state.editSlotId === slot.id;
       return `<li class="dinner-row"><div class="day">${slot.day}<strong>${5 + i}</strong></div><div><div class="meal-title">${slot.sourceId ? 'Fajita leftovers' : esc(titleFor(slot.mealId))}</div><div class="row-notes"><span>${slot.mealId === 'takeout' ? 'Chosen by your household' : slot.sourceId ? 'Serve or reheat' : meal?.effort !== undefined ? `${meal.effort} min hands-on` : 'Hands-on effort unknown'}</span>${slot.completed ? '<span>Dinner recorded</span>' : ''}</div>${slot.sourceId ? '<span class="source-link">Monday cooking covers this dinner</span>' : ''}${capacityText(slot) ? `<span class="capacity ${slot.sourceId ? 'leftover' : ''}">${capacityText(slot)}</span>` : ''}</div>${action(slot.completed ? 'History' : edit ? 'Cancel' : 'Change', slot.completed ? 'history' : 'edit-slot', 'text-button row-action', slotAttrs(slot))}${edit ? `<div class="inline-editor"><label for="meal-choice">Dinner for ${slot.day}, ${5 + i} October</label><select id="meal-choice">${state.meals.filter((m) => eligible(state, m, slot)).map((m) => `<option value="${m.id}" ${m.id === slot.mealId ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}<option value="takeout">Takeout · explicit household choice</option></select><p class="small muted">Only confirmed compatible meals that fit this date are offered.</p><div class="actions">${action('Review changes', 'review-repair', 'primary', slotAttrs(slot))}${action('Keep this dinner', 'cancel-edit', 'secondary')}</div></div>` : ''}</li>`;
-    }).join('')}</ol></section><aside class="readiness" aria-label="Week readiness"><h2>Ready for the week</h2><ul class="readiness-list"><li>${icon('check')}<span>Compatibility confirmed for the selected meals</span></li><li>${icon('clock')}<span>Quick-cook and hands-off nights have a dinner that fits</span></li><li>${icon('link')}<span>Monday cooking covers Tuesday's leftovers</span></li><li>${icon('shop')}<span>${incompleteMeals().length ? 'Some ingredients still need your review' : 'Known ingredients are ready for your shopping list'}</span></li></ul>${weekAction()}<p>Confirming keeps this week together. Later changes show their effects before you save.</p><details class="capacity-info"><summary>Why these meals?</summary><p>Familiar household meals lead. Known hands-on effort fits the schedule, and one explicitly planned extra dinner covers Tuesday.</p></details></aside></div><div class="action-dock"><small>${plan.confirmed ? 'The week is confirmed' : 'Review the seven dinners first'}</small>${weekAction()}</div>`;
+    }).join('')}</ol></section><aside class="readiness" aria-label="Week readiness"><h2>Week readiness</h2><ul class="readiness-list"><li>${icon(ready.compatible ? 'check' : 'alert')}<span>${ready.compatible ? 'Compatibility confirmed for the selected meals' : 'One or more dinners need compatibility review'}</span></li><li>${icon(ready.capacity ? 'clock' : 'alert')}<span>${ready.capacity ? 'Quick-cook and hands-off nights have a dinner that fits' : 'One or more dinners do not fit the date’s capacity'}</span></li><li>${icon(ready.leftovers ? 'link' : 'alert')}<span>${!ready.leftoverCount ? 'No leftover dinners planned' : ready.leftovers ? 'Planned leftover dinners have a source' : 'Planned leftovers need a replacement dinner'}</span></li><li>${icon('shop')}<span>${incompleteMeals().length ? 'Some ingredients still need your review' : 'Known ingredients are ready for your shopping list'}</span></li></ul>${weekAction()}<p>Confirming keeps this week together. Later changes show their effects before you save.</p><details class="capacity-info"><summary>Why these meals?</summary><p>Familiar household meals lead when compatibility, capacity and leftover coverage are confirmed.</p></details></aside></div><div class="action-dock"><small>${plan.confirmed ? 'The week is confirmed' : 'Review the seven dinners first'}</small>${weekAction()}</div>`;
 }
 function shopView() {
   if (!currentPlan(state)?.confirmed) return heading('Shopping', 'Start with a confirmed week.') + `<section class="empty-state"><h2>Your list follows your plan</h2><p>Review and confirm the seven dinners first. Then the list uses their known ingredients and leaves incomplete meals for you to review.</p>${action('Review the week', 'go-plan')}</section>`;
@@ -153,22 +207,30 @@ function shopView() {
   const missing = incompleteMeals();
   return heading('Shopping', `${currentPlan(state).name} · ${checked} of ${items.length} known items checked`) + planChoice() + saveBar() +
     (missing.length ? `<section class="alert"><h2>Some meals have no ingredient list</h2><p>${missing.map((slot) => esc(titleFor(slot.mealId))).join(', ')}. No ingredients have been guessed. Review these meals separately before confirming shopping.</p>${action('Review the week', 'go-plan', 'secondary')}</section>` : '') +
-    (state.shoppingConfirmed ? `<section class="alert"><h2>Shopping is confirmed</h2><p>${state.unavailable.length ? 'Unavailable items remain recorded. Dinners that use them need a confirmed repair.' : 'These shopping commitments stay with the week. A dinner change will preview the grocery effects.'}</p>${state.unavailable.length ? action('Review affected dinners', 'shopping-repair', 'secondary') : ''}</section>` : '') +
+    (state.shoppingConfirmed ? `<section class="alert"><h2>Shopping is confirmed</h2><p>${state.unavailable.length ? 'Unavailable items remain recorded. Dinners that use them need a confirmed repair.' : 'These shopping commitments stay with the week. A dinner change will preview the grocery effects.'}</p>${state.unavailable.length ? action('Review affected dinners', 'shopping-repair', 'secondary') : ''}</section>` : state.shoppingSnapshot ? '<section class="alert"><h2>Updated list needs confirmation</h2><p>A dinner changed after shopping was confirmed. New ingredients are unchecked; the earlier shopping record is retained below.</p></section>' : '') +
+    (state.shoppingSnapshot ? `<details class="surface"><summary>Confirmed shopping history</summary>${(state.shoppingHistory.length ? state.shoppingHistory : [state.shoppingSnapshot]).map((snapshot, i) => `<h3>Confirmation ${i + 1}</h3><ul class="changes">${snapshot.map((item) => `<li>${esc(item.name)}<small>${esc(item.meals.join(' · '))} · ${item.unavailable ? 'Unavailable' : item.checked ? 'Checked' : 'Unchecked'}</small></li>`).join('')}</ul>`).join('')}</details>` : '') +
     `<div class="shop-layout"><section class="surface" aria-labelledby="grocery-heading"><div class="grocery-group"><h2 id="grocery-heading">Known ingredients</h2>${items.map((item) => `<div class="grocery-row ${state.checkedItems.includes(item.id) ? 'checked' : ''}"><label class="check-label"><input type="checkbox" data-item="${item.id}" ${state.checkedItems.includes(item.id) ? 'checked' : ''} ${state.shoppingConfirmed ? 'disabled' : ''} /><span><span class="item-name">${esc(item.name)}</span><small>For ${[...new Set(item.meals)].map(esc).join(' · ')}</small></span></label>${action(state.unavailable.includes(item.id) ? 'Unavailable' : 'Not available?', 'unavailable', 'text-button', `data-item="${item.id}" ${state.shoppingConfirmed ? 'disabled' : ''}`)}</div>`).join('')}</div></section><aside class="readiness"><h2>Bring the week home</h2><p>Check what you have or have bought. Mark anything unavailable so the household can choose a dinner repair.</p>${action(state.shoppingConfirmed ? 'Go to Today' : 'Confirm shopping', state.shoppingConfirmed ? 'go-today' : 'confirm-shopping', 'primary')}<p class="small">Ambiguous quantities stay separate. Leftover servings don't add another set of cooking ingredients.</p></aside></div><div class="action-dock"><small>${checked} of ${items.length} checked</small>${action(state.shoppingConfirmed ? 'Go to Today' : 'Confirm shopping', state.shoppingConfirmed ? 'go-today' : 'confirm-shopping', 'primary')}</div>`;
 }
 function todayView() {
-  if (state.plans.length > 1 && !state.todayChoice) return heading('Today', 'Monday, 5 October · Sample date') + `<section class="empty-state"><h2>Two plans include today</h2><p>Choose which confirmed plan to use. Nothing has been selected for you.</p><ul class="list">${state.plans.map((p) => `<li><div><strong>${esc(p.name)}</strong><small>${esc(titleFor(p.slots[0].mealId))}</small></div>${action('Use this plan', 'choose-today-plan', 'secondary', `data-plan="${p.id}"`)}</li>`).join('')}</ul></section>`;
-  if (!currentPlan(state)?.confirmed || state.empty) return heading('Today', 'Monday, 5 October · Sample date') + `<section class="empty-state"><h2>No confirmed dinner for today</h2><p>Make a week or choose an existing plan. The app won't pick an unfinished dinner from another date.</p>${action('Plan the week', 'go-plan')}</section>`;
-  const slot = currentPlan(state).slots.find((item) => item.id === state.todaySlotId) ?? currentPlan(state).slots[0];
+  const matches = state.plans.filter((p) => p.confirmed).flatMap((plan) => plan.slots.filter((slot) => slot.date === state.sampleDate).map((slot) => ({ plan, slot })));
+  const selection = todaySelection(state);
+  if (!selection && matches.length > 1) return heading('Today', `${state.sampleDate} · Sample date`) + `<section class="empty-state"><h2>Choose today's dinner</h2><p>More than one confirmed plan includes this date.</p><ul class="list">${matches.map(({ plan, slot }) => `<li><div><strong>${esc(plan.name)}</strong><small>${esc(slot.day)} · ${esc(slot.sourceId ? 'Fajita leftovers' : titleFor(slot.mealId))}</small></div>${action('Use this dinner', 'choose-today-plan', 'secondary', `data-plan="${plan.id}" data-slot="${slot.id}"`)}</li>`).join('')}</ul></section>`;
+  if (!selection || state.empty) return heading('Today', `${state.sampleDate} · Sample date`) + `<section class="empty-state"><h2>No confirmed dinner for today</h2><p>Make a week or choose an existing plan. The app won't pick an unfinished dinner from another date.</p>${action('Plan the week', 'go-plan')}</section>`;
+  const { plan, slot } = selection;
+  state.selectedPlanId = plan.id;
   const meal = mealFor(state, slot.mealId);
-  return heading('Today', `${slot.day}, ${Number(slot.date.slice(-2))} October · ${currentPlan(state).name}`) + saveBar() +
+  return heading(selection.history ? 'Dinner record' : 'Today', `${slot.day}, ${Number(slot.date.slice(-2))} October · ${plan.name}${selection.history ? ' · History' : ''}`) + saveBar() +
     (state.broken ? `<section class="alert"><h2>Tuesday's leftovers need another plan</h2><p>Monday didn't produce the expected extra dinner. Tuesday is hands-off, so a quick recipe won't solve it.</p>${action('Choose a dinner repair', 'broken-repair', 'secondary', slotAttrs(slot))}</section>` : '') +
-    `<div class="today-layout"><section class="today-meal"><h2>${slot.sourceId ? 'Fajita leftovers' : esc(titleFor(slot.mealId))}</h2><div class="row-notes"><span>${slot.sourceId ? 'Serve or reheat · No cooking timer' : meal?.effort ? `${meal.effort} min hands-on · Serves ${meal.serves}` : slot.mealId === 'takeout' ? 'Your household chose takeout' : 'Hands-on effort unknown'}</span></div>${capacityText(slot) ? `<span class="capacity">${capacityText(slot)}</span>` : ''}<p class="today-note">Expected at dinner: ${state.diners.map(esc).join(', ')}. One shared meal, with simple adjustments if needed.</p>${slot.completed ? `<div class="status-bar">${icon('check')}<span>Dinner recorded${slot.elapsed !== null ? ` · ${slot.elapsed < 1 ? 'Less than a minute' : `${slot.elapsed} minutes`} from start to ready` : ' · Cooking time unknown'}</span></div><div class="actions">${action(state.showFeedback ? 'Hide feedback' : 'Add feedback', 'toggle-feedback', 'primary')}${action('Correct this dinner', 'correct-dinner', 'secondary', slotAttrs(slot))}</div>${state.showFeedback ? feedbackForm(slot) : '<p class="small muted">Feedback is optional. You can return to it from dinner history.</p>'}` : `<div class="actions">${!slot.sourceId && slot.mealId !== 'takeout' ? action(slot.startedAt ? 'Cooking started' : 'Start cooking', 'start-cooking', 'primary', `${slotAttrs(slot)} ${slot.startedAt || state.broken ? 'disabled' : ''}`) : ''}${action(slot.mealId === 'takeout' ? 'Dinner obtained' : "Dinner's ready", 'dinner-ready', slot.startedAt || slot.sourceId || slot.mealId === 'takeout' ? 'primary' : 'secondary', `${slotAttrs(slot)} ${state.broken ? 'disabled' : ''}`)}${!slot.sourceId && slot.mealId !== 'takeout' ? action('Record dinner without timing', 'record-without-timing', 'text-button', `${slotAttrs(slot)} ${state.broken ? 'disabled' : ''}`) : ''}</div><div class="content-section">${action('Plans changed · show me options', 'recovery-options', 'secondary', slotAttrs(slot))}</div>`}</section><aside class="readiness"><h2>The dinner details</h2>${meal?.ingredients.length ? action('Open the recipe', 'open-recipe', 'secondary', `data-meal="${meal.id}"`) : '<p>This meal has no linked recipe. Ingredients stay unknown.</p>'}<details class="capacity-info"><summary>What can change?</summary><p>Options can include a stored simpler recipe, another household meal, confirmed leftovers, or takeout you choose. A repair shows affected dinners before confirmation.</p></details>${state.repairs.length ? `<p>${state.repairs.length} confirmed repair${state.repairs.length > 1 ? 's' : ''} retained in this plan's history.</p>` : ''}</aside></div>`;
+    `<div class="today-layout"><section class="today-meal"><h2>${slot.sourceId ? 'Fajita leftovers' : esc(titleFor(slot.mealId))}</h2><div class="row-notes"><span>${slot.sourceId ? 'Serve or reheat · No cooking timer' : meal?.effort ? `${meal.effort} min hands-on · Serves ${meal.serves}` : slot.mealId === 'takeout' ? 'Your household chose takeout' : 'Hands-on effort unknown'}</span></div>${capacityText(slot) ? `<span class="capacity">${capacityText(slot)}</span>` : ''}<p class="today-note">Expected at dinner: ${state.diners.map(esc).join(', ')}. One shared meal, with simple adjustments if needed.</p>${slot.completed ? `<div class="status-bar">${icon('check')}<span>Dinner recorded${slot.elapsed !== null ? ` · ${slot.elapsed < 1 ? 'Less than a minute' : `${slot.elapsed} minutes`} from start to ready` : ' · Cooking time unknown'}</span></div><div class="actions">${action(state.showFeedback ? 'Hide feedback' : 'Add feedback', 'toggle-feedback', 'primary')}${action('Correct this dinner', 'correct-dinner', 'secondary', slotAttrs(slot))}</div>${state.showFeedback ? feedbackForm(slot) : '<p class="small muted">Feedback is optional. You can return to it from dinner history.</p>'}` : `<div class="actions">${!slot.sourceId && slot.mealId !== 'takeout' ? action(slot.startedAt ? 'Cooking started' : 'Start cooking', 'start-cooking', 'primary', `${slotAttrs(slot)} ${slot.startedAt || state.broken ? 'disabled' : ''}`) : ''}${action(slot.mealId === 'takeout' ? 'Dinner obtained' : "Dinner's ready", 'dinner-ready', slot.startedAt || slot.sourceId || slot.mealId === 'takeout' ? 'primary' : 'secondary', `${slotAttrs(slot)} ${state.broken ? 'disabled' : ''}`)}${!slot.sourceId && slot.mealId !== 'takeout' ? action('Record dinner without timing', 'record-without-timing', 'text-button', `${slotAttrs(slot)} ${state.broken ? 'disabled' : ''}`) : ''}</div><div class="content-section">${action('Plans changed · show me options', 'recovery-options', 'secondary', slotAttrs(slot))}</div>`}</section><aside class="readiness"><h2>The dinner details</h2>${meal?.ingredients.length ? action('Open the recipe', 'open-recipe', 'secondary', `data-meal="${meal.id}"`) : '<p>This meal has no linked recipe. Ingredients stay unknown.</p>'}<details class="capacity-info"><summary>What can change?</summary><p>Options can include a stored simpler recipe, another household meal, confirmed leftovers, or takeout you choose. A repair shows affected dinners before confirmation.</p></details>${state.repairs.length ? `<p>${state.repairs.length} confirmed repair${state.repairs.length > 1 ? 's' : ''} retained in this plan's history.</p>` : ''}${correctionHistory(plan.id, slot.id)}</aside></div>`;
+}
+function correctionHistory(planId, slotId) {
+  const records = state.corrections.filter((item) => item.planId === planId && item.slotId === slotId);
+  return records.length ? `<details class="content-section"><summary>Earlier dinner records (${records.length})</summary><ul class="changes">${records.map(({ before }) => `<li>${esc(dinnerName(before))}<small>Elapsed cooking: ${before.elapsed ?? 'unknown'} min · Hands-on effort: ${before.activeEffortMinutes ?? 'unknown'} min · Responses: ${(before.feedback ?? []).map((answer, i) => `${esc(state.diners[i] ?? `Diner ${i + 1}`)} ${esc(answer ?? 'unreported')}`).join(' · ') || 'unreported'} · Extra dinner: ${before.leftoversProduced == null ? 'unreported' : before.leftoversProduced ? 'yes' : 'no'}</small></li>`).join('')}</ul></details>` : '';
 }
 function feedbackForm(slot) {
   const cooking = !slot.sourceId && slot.mealId !== 'takeout';
-  const responses = [['accepted', 'Ate and accepted'], ['rejected', 'Declined the shared meal'], ['absent', "Wasn't at dinner"], ['not-hungry', "Wasn't hungry"]];
-  return `<form id="feedback-form" class="content-section" data-slot="${slot.id}"><h3>How did the shared dinner work?</h3><p class="small muted">Keep everyone's response. Absence or lack of hunger isn't meal rejection.</p>${state.diners.map((name, i) => `<div class="feedback-row"><label for="response-${i}">${esc(name)}</label><select id="response-${i}" name="person-${i}">${responses.map(([value, label]) => `<option value="${value}" ${value === (slot.feedback?.[i] ?? 'accepted') ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></div>`).join('')}${cooking ? `<label for="effort">Hands-on effort, if you know it (minutes)</label><input id="effort" name="effort" type="number" min="0" max="240" value="${slot.activeEffortMinutes ?? ''}" placeholder="Leave unknown if you don't know" />` : ''}${cooking && mealFor(state, slot.mealId)?.leftovers ? `<fieldset><legend>Did you get the planned extra dinner?</legend><label class="check-label"><input type="radio" name="leftovers" value="yes" checked /><span>Yes, one additional household dinner</span></label><label class="check-label"><input type="radio" name="leftovers" value="no" /><span>No, don't count on those leftovers</span></label></fieldset>` : ''}<button class="button primary" type="submit">Save feedback</button>${slot.feedback ? `<p class="small muted">A correction retains the earlier response and updates the evidence used for future plans.</p>` : ''}</form>`;
+  const responses = [['', 'Not reported'], ['accepted', 'Ate and accepted'], ['rejected', 'Declined the shared meal'], ['absent', "Wasn't at dinner"], ['not-hungry', "Wasn't hungry"]];
+  return `<form id="feedback-form" class="content-section" data-plan="${currentPlan(state).id}" data-slot="${slot.id}"><h3>How did the shared dinner work?</h3><p class="small muted">Keep everyone's response. Absence or lack of hunger isn't meal rejection.</p>${state.diners.map((name, i) => `<div class="feedback-row"><label for="response-${i}">${esc(name)}</label><select id="response-${i}" name="person-${i}">${responses.map(([value, label]) => `<option value="${value}" ${value === (slot.feedback?.[i] ?? '') ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></div>`).join('')}${cooking ? `<label for="effort">Hands-on effort, if you know it (minutes)</label><input id="effort" name="effort" type="number" min="0" max="240" value="${slot.activeEffortMinutes ?? ''}" placeholder="Leave unknown if you don't know" />` : ''}${cooking && mealFor(state, slot.mealId)?.leftovers ? `<fieldset><legend>Did you get the planned extra dinner?</legend><label class="check-label"><input type="radio" name="leftovers" value="unknown" ${slot.leftoversProduced == null ? 'checked' : ''} /><span>Not reported</span></label><label class="check-label"><input type="radio" name="leftovers" value="yes" ${slot.leftoversProduced === true ? 'checked' : ''} /><span>Yes, one additional household dinner</span></label><label class="check-label"><input type="radio" name="leftovers" value="no" ${slot.leftoversProduced === false ? 'checked' : ''} /><span>No, don't count on those leftovers</span></label></fieldset>` : ''}<button class="button primary" type="submit">Save feedback</button></form>${slot.feedbackHistory?.length ? `<details class="content-section"><summary>Earlier feedback (${slot.feedbackHistory.length})</summary><ul class="list">${slot.feedbackHistory.map((entry) => `<li><div>${state.diners.map((name, i) => `${esc(name)}: ${esc(responses.find(([value]) => value === (entry.responses[i] ?? ''))?.[1] ?? 'Not reported')}`).join(' · ')}<small>Hands-on effort: ${entry.effort ?? 'unknown'} min · Extra dinner: ${entry.leftoversProduced == null ? 'not reported' : entry.leftoversProduced ? 'yes' : 'no'}</small></div></li>`).join('')}</ul></details>` : ''}`;
 }
 function libraryMeals() {
   if (!state.largeLibrary) return state.empty ? state.meals.filter((m) => m.id.startsWith('user-')) : state.meals;
@@ -196,6 +258,15 @@ function invitationView() {
   const content = state.inviteStep === 0 ? `<h2>You've been invited</h2><p>The invitation is for alex@example.test. Sign in and verify that same address before accepting.</p><form id="invite-form"><label for="invite-email">Email address</label><input id="invite-email" type="email" required value="alex@example.test" /><button class="button primary" type="submit">Continue sample sign-in</button></form>` : `<h2>Your email is verified</h2><p>This sample creator invitation will create an empty household. No pilot data is imported.</p>${action('Accept invitation', 'accept-invite', 'primary')}`;
   return heading('Welcome to the table', 'An invitation connects you to your household.') + `<section class="empty-state invitation">${content}</section>`;
 }
+function dinnerName(slot, mealId = slot.mealId) {
+  return slot.sourceId && mealId === slot.mealId ? 'Fajita leftovers' : titleFor(mealId);
+}
+function groceryPreview(preview) {
+  const effect = groceryEffect(state, preview);
+  const items = (list) => list.length ? `<ul class="changes">${list.map((item) => `<li>${esc(item.name)}<small>${esc(item.meals.join(' · '))}${state.checkedItems.includes(item.id) ? ' · Previously checked' : ''}${state.unavailable.includes(item.id) ? ' · Marked unavailable' : ''}</small></li>`).join('')}</ul>` : '<p>None.</p>';
+  const commitments = effect.retained.filter((item) => state.checkedItems.includes(item.id));
+  return `<h3>Shopping effects</h3><p>New or changed ingredients need confirmation. The earlier shopping record stays in history.</p><h4>Add to current list · unconfirmed</h4>${items(effect.added)}<h4>Remove from current list</h4>${items(effect.removed)}<h4>Retained checked commitments</h4>${items(commitments)}${state.shoppingConfirmed ? '<p>Confirmed shopping history remains recorded; the revised current list is separate.</p>' : ''}`;
+}
 function showDialog(preview) {
   state.preview = preview;
   const dialog = document.querySelector('#confirmation');
@@ -213,10 +284,10 @@ function showDialog(preview) {
   } else if (preview.type === 'correction') {
     title = 'Correct the completed dinner';
     const plan = state.plans.find((p) => p.id === preview.planId);
-    body = `<p>Record that the household got takeout instead. Keep dinner completion history, remove false cooking evidence, and preview any unfinished leftover dependency.</p><ul class="changes">${preview.changes.map((c) => { const slot = plan.slots.find((s) => s.id === c.slotId); return `<li><strong>${slot.day}: ${esc(titleFor(c.before))} → ${esc(titleFor(c.after))}</strong><small>${c.slotId === preview.slotId ? 'Completion and the earlier record are retained; false cooking evidence is removed.' : 'The unfinished dependent dinner receives a compatible replacement.'}</small></li>`; }).join('')}</ul><label for="recovery-reason">What changed? This helps classify the recovery.</label><select id="recovery-reason"><option value="unknown">Not sure</option><option value="external">An unforeseeable disruption</option><option value="timing">Timing, effort or preparation didn't fit</option><option value="acceptance">The shared meal didn't work for everyone</option></select>`;
+    body = `<p>Record that the household got takeout instead. Keep dinner completion history, remove false cooking evidence, and preview any unfinished leftover dependency.</p><ul class="changes">${preview.changes.map((c) => { const slot = plan.slots.find((s) => s.id === c.slotId); return `<li><strong>${slot.day}: ${esc(dinnerName(slot, c.before))} → ${esc(titleFor(c.after))}</strong><small>${slot.sourceId ? `Linked to ${esc(dinnerName(plan.slots.find((item) => item.id === slot.sourceId)))} on the source cooking day. ` : ''}${c.slotId === preview.slotId ? 'Completion and the earlier record are retained; false cooking evidence is removed.' : 'The unfinished dependent dinner receives a compatible replacement.'}</small></li>`; }).join('')}</ul>${groceryPreview(preview)}<label for="recovery-reason">What changed? This helps classify the recovery.</label><select id="recovery-reason"><option value="unknown">Not sure</option><option value="external">An unforeseeable disruption</option><option value="timing">Timing, effort or preparation didn't fit</option><option value="acceptance">The shared meal didn't work for everyone</option></select>`;
     confirmLabel = 'Confirm takeout correction';
   } else {
-    body = `<p>Only this dinner and the dependencies it needs will change. Other dates and completed dinners stay fixed.</p><ul class="changes">${preview.changes.map((change) => { const slot = currentPlan(state).slots.find((s) => s.id === change.slotId); return `<li><strong>${slot.day}: ${esc(titleFor(change.before))} → ${esc(titleFor(change.after))}</strong><small>${slot.sourceId ? 'The old leftover link is removed; this hands-off night has a confirmed slow-cooker dinner.' : 'A household-compatible dinner that fits this date.'}</small></li>`; }).join('')}</ul><p class="small muted">Grocery effect: review ingredients for the new cooking dinner${preview.changes.length > 1 ? 's' : ''}. Confirmed shopping history is retained; nothing is silently erased.</p>`;
+    body = `<p>Only this dinner and the dependencies it needs will change. Other dates and completed dinners stay fixed.</p><ul class="changes">${preview.changes.map((change) => { const slot = currentPlan(state).slots.find((s) => s.id === change.slotId); return `<li><strong>${slot.day}: ${esc(dinnerName(slot, change.before))} → ${esc(titleFor(change.after))}</strong><small>${slot.sourceId ? `Linked to ${esc(dinnerName(currentPlan(state).slots.find((item) => item.id === slot.sourceId)))} on the source cooking day. The old leftover link is removed.` : 'A household-compatible dinner that fits this date.'}</small></li>`; }).join('')}</ul>${groceryPreview(preview)}`;
   }
   document.querySelector('#dialog-content').innerHTML = `<header class="dialog-heading"><h2 id="dialog-title">${title}</h2><button class="icon-button" aria-label="Close review" data-action="close-dialog">${icon('close')}</button></header>${body}<div class="actions">${action(confirmLabel, 'confirm-preview', 'primary')}${action('Keep the current plan', 'close-dialog', 'secondary')}</div>`;
   dialog.showModal();
@@ -254,6 +325,7 @@ function navigate(view, recipeId = null) {
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
 function contextFrom(el) {
+  if (Number(el.dataset.revision) !== state.revision) throw Error('The household changed. Review this dinner again before continuing.');
   const plan = state.plans.find((p) => p.id === el.dataset.plan);
   const slot = plan?.slots.find((s) => s.id === el.dataset.slot);
   if (!plan || !slot) throw Error('Choose the dinner and plan again.');
@@ -274,7 +346,7 @@ function confirmAction() {
   document.querySelector('#confirmation').close();
   if (!result.ok) { state.saveState = 'conflict'; state.message = result.reason; render(); announce(result.reason); return; }
   if (preview.type === 'week') currentPlan(state).confirmed = true;
-  if (preview.type === 'shopping') { state.shoppingSnapshot = structuredClone(groceries()); state.shoppingConfirmed = true; }
+  if (preview.type === 'shopping') { const snapshot = structuredClone(groceries()).map((item) => ({ ...item, checked: state.checkedItems.includes(item.id), unavailable: state.unavailable.includes(item.id) })); state.shoppingHistory.push(snapshot); state.shoppingSnapshot ??= snapshot; state.shoppingConfirmed = true; }
   state.preview = null; state.editSlotId = null; state.broken = false; state.saveState = 'saved';
   render(); announce(preview.type === 'week' ? 'The week is confirmed. Your shopping list is ready.' : 'Confirmed. The household history is retained.');
 }
@@ -285,7 +357,7 @@ function applyScenario(name) {
   if (name === 'shopping') state.view = 'shop';
   if (['cooking', 'feedback', 'broken', 'multiple', 'no-plan', 'source-correction'].includes(name)) state.view = 'today';
   if (name === 'feedback') { plan.slots[0].completed = true; state.showFeedback = true; }
-  if (name === 'broken') { state.broken = true; state.todaySlotId = 'slot-1'; }
+  if (name === 'broken') { state.broken = true; state.sampleDate = '2026-10-06'; }
   if (name === 'multiple') state.plans.push({ ...structuredClone(plan), id: 'plan-overlap', name: 'Catch-up plan · includes 5 October', slots: plan.slots.map((s, i) => ({ ...s, id: `other-${i}`, sourceId: null, mealId: i === 0 ? 'chili' : s.mealId })) });
   if (name === 'no-plan') plan.confirmed = false;
   if (name === 'empty' || name === 'invite') { state.empty = true; state.diners = []; state.restrictions = []; }
@@ -307,7 +379,7 @@ if (typeof document !== 'undefined') {
     if (!el || el.disabled) return;
     const key = el.dataset.action;
     try {
-      if (key.startsWith('go-')) { location.hash = key.slice(3); return; }
+      if (key.startsWith('go-')) { if (key === 'go-today') state.historyTarget = null; location.hash = key.slice(3); return; }
       if (key === 'close-dialog') { document.querySelector('#confirmation').close(); state.preview = null; return; }
       if (key === 'confirm-preview') { confirmAction(); return; }
       if (key === 'finish-save' || key === 'retry') { state.saveState = 'saved'; render(); announce('Sample save completed. Your draft is retained.'); return; }
@@ -318,13 +390,13 @@ if (typeof document !== 'undefined') {
       if (key === 'accept-invite') { state.invitation = false; state.empty = true; state.view = 'household'; render(true); return; }
       if (state.saveState === 'pending') { announce('Please wait for the current save before changing the week.'); return; }
       if (key === 'confirm-week') {
-        if (currentPlan(state).slots.some((slot) => !slot.sourceId && slot.mealId !== 'takeout' && !eligible(state, mealFor(state, slot.mealId), slot))) { announce('A selected dinner needs compatibility or capacity review first.'); return; }
+        const ready = readiness(state); if (!ready.compatible || !ready.capacity || !ready.leftovers) { announce('Compatibility, capacity, or leftovers need review before this week can be confirmed.'); return; }
         showDialog({ type: 'week', planId: currentPlan(state).id, expectedRevision: state.revision }); return;
       }
       if (key === 'edit-slot') { state.editSlotId = state.editSlotId === el.dataset.slot ? null : el.dataset.slot; render(); return; }
       if (key === 'cancel-edit') { state.editSlotId = null; render(); return; }
       if (key === 'review-repair') { const { plan, slot } = contextFrom(el); showDialog(previewMealChange(state, plan.id, slot.id, document.querySelector('#meal-choice').value)); return; }
-      if (key === 'history') { state.todaySlotId = el.dataset.slot; navigate('today'); state.showFeedback = true; render(); return; }
+      if (key === 'history') { navigate('today'); state.historyTarget = { planId: el.dataset.plan, slotId: el.dataset.slot }; state.showFeedback = true; render(); return; }
       if (key === 'open-recipe') { location.hash = `recipe-${el.dataset.meal}`; return; }
       if (key === 'toggle-meal-form') { state.showMealForm = !state.showMealForm; render(); document.querySelector('#meal-name')?.focus(); return; }
       if (key === 'clear-search') { state.query = ''; state.category = 'All'; render(); return; }
@@ -332,7 +404,7 @@ if (typeof document !== 'undefined') {
       if (key === 'unavailable') { const id = el.dataset.item; state.unavailable = state.unavailable.includes(id) ? state.unavailable.filter((x) => x !== id) : [...state.unavailable, id]; state.checkedItems = state.checkedItems.filter((x) => x !== id); render(); return; }
       if (key === 'confirm-shopping') { showDialog({ type: 'shopping', planId: currentPlan(state).id, expectedRevision: state.revision }); return; }
       if (key === 'shopping-repair') { navigate('plan'); state.message = 'Shopping is retained. Choose the affected dinner to preview a repair; ingredients have not been assumed available.'; render(); return; }
-      if (key === 'choose-today-plan') { state.selectedPlanId = el.dataset.plan; state.todaySlotId = currentPlan(state).slots[0].id; state.todayChoice = el.dataset.plan; render(); return; }
+      if (key === 'choose-today-plan') { state.todayChoice = { planId: el.dataset.plan, slotId: el.dataset.slot, date: state.sampleDate }; render(); return; }
       if (key === 'start-cooking') { const { slot } = contextFrom(el); slot.startedAt = Date.now(); render(); announce('Cooking started. Elapsed time uses this recorded start.'); return; }
       if (key === 'dinner-ready' || key === 'record-without-timing') { const { slot } = contextFrom(el); complete(slot, key === 'dinner-ready'); return; }
       if (key === 'toggle-feedback') { state.showFeedback = !state.showFeedback; render(); return; }
@@ -345,7 +417,7 @@ if (typeof document !== 'undefined') {
   document.addEventListener('change', (event) => {
     const el = event.target;
     if (el.id === 'scenario') { applyScenario(el.value); return; }
-    if (el.id === 'plan-choice') { state.selectedPlanId = el.value; state.todayChoice = el.value; render(); return; }
+    if (el.id === 'plan-choice') { state.selectedPlanId = el.value; render(); return; }
     if (el.id === 'recipe-category') { state.category = el.value; render(); return; }
     if (el.id === 'recipe-version') { document.querySelector('#version-note').textContent = el.selectedIndex ? 'Sample sheet-pan version: 15 minutes hands-on. Slice the same ingredients, spread on a tray, and roast until the chicken is cooked through. This is a version of the same meal.' : 'Reserve plain chicken before combining if that helps the shared meal.'; return; }
     if (el.id === 'recipe-zip') { document.querySelector('#import-note').textContent = 'Sample import review: add as a new meal, link to an existing meal, or save recipe only. The selected file has not been read or uploaded.'; return; }
@@ -353,7 +425,7 @@ if (typeof document !== 'undefined') {
   });
   document.addEventListener('submit', (event) => {
     event.preventDefault(); const form = event.target; const values = new FormData(form);
-    if (form.id === 'feedback-form') { const slot = currentPlan(state).slots.find((s) => s.id === form.dataset.slot); slot.feedback = state.diners.map((_, i) => values.get(`person-${i}`)); const effort = values.get('effort'); if (effort !== null) slot.activeEffortMinutes = effort === '' ? null : Number(effort); state.revision++; if (values.get('leftovers') === 'no') { const dependent = currentPlan(state).slots.find((s) => s.sourceId === slot.id && !s.completed); if (dependent) { state.broken = true; state.todaySlotId = dependent.id; state.showFeedback = false; } } render(); announce(slot.feedback.includes('rejected') ? 'Feedback saved. The shared dinner was not accepted by everyone; individual acceptance is retained.' : 'Feedback saved. Neutral responses are not treated as meal rejection.'); }
+    if (form.id === 'feedback-form') { const responses = state.diners.map((_, i) => values.get(`person-${i}`) || null); const effort = values.get('effort'); const leftover = values.get('leftovers'); const dependent = recordFeedback(state, form.dataset.plan, form.dataset.slot, responses, effort === null || effort === '' ? null : Number(effort), leftover === null || leftover === 'unknown' ? null : leftover === 'yes'); if (state.broken && dependent) { state.sampleDate = dependent.date; state.historyTarget = null; state.showFeedback = false; } render(); announce(responses.includes('rejected') ? 'Feedback saved. The shared dinner was not accepted by everyone; individual acceptance is retained.' : 'Feedback saved. Unreported and neutral responses remain distinct.'); }
     if (form.id === 'diner-form') { state.diners.push(values.get('name').trim()); render(); announce('Diner added to the sample household.'); }
     if (form.id === 'restriction-form') { state.restrictions.push(`${values.get('restriction').trim()} · ${values.get('person')}`); state.meals.forEach((m) => { m.safe = false; }); state.message = 'Compatibility needs review after the new hard restriction. Existing dinners have not been silently replaced.'; render(); announce('Restriction saved. Confirm meal compatibility before planning again.'); }
     if (form.id === 'meal-form') { state.meals.push({ id: `user-${state.meals.length}`, name: values.get('name').trim(), category: 'Name-only', safe: !state.restrictions.length, ingredients: [], steps: [] }); state.showMealForm = false; render(); announce('Name-only meal added. Ingredients and effort remain unknown.'); }
@@ -362,7 +434,7 @@ if (typeof document !== 'undefined') {
     if (form.id === 'invite-form') { if (document.querySelector('#invite-email').value !== 'alex@example.test') { announce('This sample invitation belongs to alex@example.test. Use that verified address.'); return; } state.inviteStep = 1; render(); }
   });
   document.querySelector('#reset-demo').addEventListener('click', () => { document.querySelector('#scenario').value = 'week'; applyScenario('week'); });
-  window.addEventListener('hashchange', () => { const hash = location.hash.slice(1); hash.startsWith('recipe-') ? navigate('recipe', hash.slice(7)) : navigate(hash || 'plan'); });
+  window.addEventListener('hashchange', () => { const hash = location.hash.slice(1); if (hash === 'today') state.historyTarget = null; hash.startsWith('recipe-') ? navigate('recipe', hash.slice(7)) : navigate(hash || 'plan'); });
   const initial = location.hash.slice(1);
   if (initial.startsWith('recipe-')) { state.view = 'recipe'; state.recipeId = initial.slice(7); }
   else if (['today', 'plan', 'shop', 'recipes', 'household'].includes(initial)) state.view = initial;

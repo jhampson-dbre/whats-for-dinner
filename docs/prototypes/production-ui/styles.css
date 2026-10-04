@@ -245,7 +245,7 @@ dialog .actions { margin-top: 24px; }
   .row-notes, .source-link { font-size: .875rem; }
   .readiness { padding-top: 8px; }
   .readiness h2 { font-size: 1.12rem; }
-  .readiness .button { display: none; }
+  .week-layout .readiness > .button, .shop-layout .readiness > .button { display: none; }
   .action-dock { position: fixed; z-index: 5; bottom: calc(72px + env(safe-area-inset-bottom)); left: 0; right: 0; display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: white; border-top: 1px solid var(--color-line); }
   .action-dock .button { flex: 1; }
   .action-dock small { max-width: 110px; font-size: .75rem; color: var(--color-secondary); }
