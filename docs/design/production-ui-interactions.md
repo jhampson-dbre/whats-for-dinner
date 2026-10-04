@@ -28,6 +28,20 @@ The readiness column and phone action dock lead from reviewing the week to confi
 
 Confirmed-plan repair is a protected review. It lists the selected dinner and every required unfinished dependency change, then requires one confirmation. A source change must not leave a hands-off leftover target with an incompatible or unknown replacement. Completed dependent dinners block contradictory source changes until corrected first. A stale household revision cannot apply the preview.
 
+### Exploring meal choices
+
+The sample library includes several confirmed slow-cooker meals, quick meals, a longer normal-night meal, and recipes whose compatibility still needs review. The initial week stays the same. The replacement menu uses the selected date's capacity and the household's explicit compatibility assertions; takeout remains an explicit household choice.
+
+| Planning scenario | How to explore it |
+| --- | --- |
+| Hands-off alternatives | On Thursday, choose `Change` to compare chili, chickpea & spinach curry, and chicken & white bean stew. Review a swap to inspect its actual grocery additions and removals before confirming. |
+| Quick dinner and dependent leftovers | On Monday, choose a quick fried rice or couscous dinner. Its review also shows the required Tuesday replacement because Monday's original leftover source is removed. |
+| A longer cooking night | Roast vegetable lasagne is available on normal nights such as Wednesday, but excluded from Monday's quick-cook and Thursday's hands-off choices. |
+| Compatibility awaiting confirmation | Creamy slow-cooker chicken appears in Recipes as needing review and is excluded from dinner choices until the household explicitly confirms compatibility. Its title or ingredients do not certify it. |
+| Incomplete meal information | Sandwich night remains a name-only meal needing review. Confirming compatibility makes it available on a normal night; constrained-night capacity and groceries stay unknown. |
+
+Confirm the week before trying a repair after shopping: in Shop, check an ingredient belonging to an unaffected dinner and confirm shopping, then swap Thursday's meal. The preview distinguishes removed ingredients, new unchecked ingredients, and retained checked commitments. The updated list needs confirmation, while the previous shopping record remains inspectable. In `Try a situation`, `Reset sample data` restores the sample week and compatibility assertions; none of these actions saves real household data.
+
 ## Cooking, feedback, and corrections
 
 `Start cooking` provides the observed start. `Dinner's ready` records completion; `Record dinner without timing` leaves elapsed time unknown. Feedback becomes available without opening itself. Individual acceptance and neutral absence/lack-of-hunger responses are distinct; refusal by an expected diner means the shared dinner was not accepted by everyone.

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createDemoState, previewMealChange, previewCorrection, confirmPreview, todaySelection, groceryItems, groceryEffect, recordFeedback, readiness } from '../docs/prototypes/production-ui/prototype.js';
+import { createDemoState, eligible, previewMealChange, previewCorrection, confirmPreview, todaySelection, groceryItems, groceryEffect, recordFeedback, readiness } from '../docs/prototypes/production-ui/prototype.js';
 
 const today = createDemoState();
 assert.equal(todaySelection(today), null, 'unconfirmed date has no Today dinner');
@@ -25,6 +25,40 @@ assert.equal(unchanged.plans[0].slots[1].sourceId, 'slot-0');
 unchanged.plans[0].slots[1].capacity = 'normal';
 const explicitCooking = previewMealChange(unchanged, 'plan-week', 'slot-1', 'fajitas');
 assert.equal(explicitCooking.changes[0].sourceId, null, 'an explicit leftover-to-cooking change remains possible');
+
+const alternatives = createDemoState();
+const [, , wednesday, thursday] = alternatives.plans[0].slots;
+const monday = alternatives.plans[0].slots[0];
+const handsOffChoices = alternatives.meals.filter((meal) => eligible(alternatives, meal, thursday));
+assert(handsOffChoices.length >= 3, 'Thursday offers at least three confirmed hands-off meals');
+assert.equal(handsOffChoices[0].id, 'chili', 'the initial repair choice remains chili');
+assert(handsOffChoices.some((meal) => meal.id === 'chickpea-spinach-curry'));
+assert(handsOffChoices.some((meal) => meal.id === 'chicken-white-bean-stew'));
+assert(eligible(alternatives, alternatives.meals.find((meal) => meal.id === 'egg-fried-rice'), monday));
+assert(eligible(alternatives, alternatives.meals.find((meal) => meal.id === 'pea-tomato-couscous'), monday));
+assert(!eligible(alternatives, alternatives.meals.find((meal) => meal.id === 'roast-vegetable-lasagne'), monday));
+assert(eligible(alternatives, alternatives.meals.find((meal) => meal.id === 'roast-vegetable-lasagne'), wednesday));
+const creamy = alternatives.meals.find((meal) => meal.id === 'creamy-slow-cooker-chicken');
+assert(!eligible(alternatives, creamy, thursday), 'unconfirmed hands-off meal needs review');
+assert.throws(() => previewMealChange(alternatives, 'plan-week', 'slot-3', creamy.id), /compatibility/i);
+creamy.safe = true;
+assert(eligible(alternatives, creamy, thursday), 'explicit compatibility confirmation enables the hands-off meal');
+assert.equal(previewMealChange(alternatives, 'plan-week', 'slot-3', creamy.id).changes[0].after, creamy.id);
+
+const thursdaySwap = createDemoState();
+const beforeThursday = structuredClone(thursdaySwap.plans[0].slots);
+const beforeGroceries = groceryItems(thursdaySwap);
+thursdaySwap.plans[0].shopping = { confirmed: true, checkedItems: [], unavailable: [], snapshot: structuredClone(beforeGroceries), history: [structuredClone(beforeGroceries)] };
+const thursdayPreview = previewMealChange(thursdaySwap, 'plan-week', 'slot-3', 'chickpea-spinach-curry');
+assert.deepEqual(thursdayPreview.changes.map((change) => change.slotId), ['slot-3']);
+const thursdayEffect = groceryEffect(thursdaySwap, thursdayPreview);
+assert(thursdayEffect.added.length && thursdayEffect.removed.length, 'swap changes the grocery list');
+assert.equal(confirmPreview(thursdaySwap, thursdayPreview).ok, true);
+assert.equal(thursdaySwap.plans[0].slots[3].mealId, 'chickpea-spinach-curry');
+assert.deepEqual(thursdaySwap.plans[0].slots.filter((_, i) => i !== 3), beforeThursday.filter((_, i) => i !== 3), 'other dates stay fixed');
+assert.deepEqual(thursdaySwap.plans[0].shopping.snapshot, beforeGroceries, 'confirmed shopping history is retained');
+assert.equal(thursdaySwap.plans[0].shopping.confirmed, false, 'new groceries need confirmation');
+assert(groceryItems(thursdaySwap).some((item) => item.id.includes('chickpea-spinach-curry')));
 
 const twoPlans = createDemoState();
 twoPlans.plans.push({ ...structuredClone(twoPlans.plans[0]), id: 'other-plan' });
@@ -99,7 +133,7 @@ completed.plans[0].slots[1].completed = true;
 assert.throws(() => previewMealChange(completed, 'plan-week', 'slot-0', 'stir-fry'), /completed leftover/i);
 
 const unsafe = createDemoState();
-unsafe.meals.find((meal) => meal.id === 'chili').safe = false;
+unsafe.meals.filter((meal) => meal.handsOff).forEach((meal) => { meal.safe = false; });
 assert.throws(() => previewMealChange(unsafe, 'plan-week', 'slot-0', 'stir-fry'), /replacement|compatible/i, 'a dependency repair must not choose an unconfirmed replacement');
 const corrected = createDemoState();
 corrected.plans[0].slots[2].completed = true;
