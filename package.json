@@ -6,23 +6,28 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck:server": "tsc --ignoreConfig --noEmit --strict --skipLibCheck --target ES2023 --module ESNext --moduleResolution Bundler --esModuleInterop --allowImportingTsExtensions api/households.ts api/records.ts scripts/household-backup.ts",
     "lint": "eslint .",
     "test": "vitest",
     "test:smoke": "playwright test"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
     "@vitejs/plugin-react": "latest",
     "fflate": "^0.8.3",
+    "pg": "^8.23.0",
     "react": "latest",
     "react-dom": "latest",
     "zod": "latest"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "latest",
     "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "latest",
     "@testing-library/react": "latest",
     "@types/node": "latest",
+    "@types/pg": "^8.23.1",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "eslint": "latest",
@@ -30,6 +35,8 @@
     "eslint-plugin-react-refresh": "latest",
     "globals": "latest",
     "jsdom": "latest",
+    "supabase": "^2.118.0",
+    "tsx": "^4.23.15",
     "typescript": "latest",
     "typescript-eslint": "latest",
     "vite": "latest",
